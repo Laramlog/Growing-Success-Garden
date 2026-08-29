@@ -1,7 +1,8 @@
+import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
 import multer from 'multer';
-import sqlite3 from 'sqlite3';
+import pg from 'pg';
 import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
 import xlsx from 'xlsx';
@@ -13,196 +14,160 @@ import { GoogleGenerativeAI } from '@google/generative-ai';
 const app = express();
 const upload = multer({ dest: 'uploads/' });
 const PORT = process.env.PORT || 5000;
-const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key-change-in-production';
+const JWT_SECRET = process.env.JWT_SECRET || 'dev-secret-change-in-production';
+const INVITE_CODE = process.env.INVITE_CODE || null; // if set, required to register
+
+const { Pool } = pg;
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+  ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false,
+});
 
 app.use(cors());
 app.use(express.json());
 app.use(express.static('public'));
 
-let db = new sqlite3.Database('./data.db', (err) => {
-  if (err) console.error(err.message);
-  else { console.log('Connected to database'); initializeDatabase(); }
-});
-
-function initializeDatabase() {
-  db.serialize(() => {
-    db.run(`CREATE TABLE IF NOT EXISTS users (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      email TEXT UNIQUE NOT NULL,
-      password TEXT NOT NULL,
-      name TEXT,
-      createdAt DATETIME DEFAULT CURRENT_TIMESTAMP
-    )`);
-
-    // grades and subjects stored as JSON arrays
-    db.run(`CREATE TABLE IF NOT EXISTS classes (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      userId INTEGER NOT NULL,
-      grades TEXT,
-      subjects TEXT,
-      classType TEXT,
-      schoolType TEXT,
-      className TEXT,
-      createdAt DATETIME DEFAULT CURRENT_TIMESTAMP,
-      FOREIGN KEY (userId) REFERENCES users(id)
-    )`);
-
-    db.run(`CREATE TABLE IF NOT EXISTS students (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      classId INTEGER NOT NULL,
-      firstName TEXT,
-      lastName TEXT,
-      pronouns TEXT,
-      createdAt DATETIME DEFAULT CURRENT_TIMESTAMP,
-      FOREIGN KEY (classId) REFERENCES classes(id)
-    )`);
-
-    db.run(`CREATE TABLE IF NOT EXISTS assignments (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      classId INTEGER NOT NULL,
-      subject TEXT,
-      name TEXT NOT NULL,
-      maxGrade REAL DEFAULT 100,
-      weight REAL DEFAULT 1,
-      category TEXT,
-      createdAt DATETIME DEFAULT CURRENT_TIMESTAMP,
-      FOREIGN KEY (classId) REFERENCES classes(id)
-    )`);
-
-    db.run(`CREATE TABLE IF NOT EXISTS grades (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      studentId INTEGER NOT NULL,
-      assignmentId INTEGER,
-      classId INTEGER NOT NULL,
-      assignmentName TEXT,
-      assignmentWeight REAL DEFAULT 1,
-      grade REAL,
-      maxGrade REAL DEFAULT 100,
-      dateSubmitted DATETIME DEFAULT CURRENT_TIMESTAMP,
-      FOREIGN KEY (studentId) REFERENCES students(id),
-      FOREIGN KEY (classId) REFERENCES classes(id)
-    )`);
-
-    db.run(`CREATE TABLE IF NOT EXISTS comments (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      studentId INTEGER NOT NULL,
-      classId INTEGER NOT NULL,
-      subject TEXT,
-      commentType TEXT,
-      content TEXT,
-      draft BOOLEAN DEFAULT 1,
-      createdAt DATETIME DEFAULT CURRENT_TIMESTAMP,
-      updatedAt DATETIME DEFAULT CURRENT_TIMESTAMP,
-      FOREIGN KEY (studentId) REFERENCES students(id),
-      FOREIGN KEY (classId) REFERENCES classes(id)
-    )`);
-
-    db.run(`CREATE TABLE IF NOT EXISTS learningSkills (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      studentId INTEGER NOT NULL,
-      classId INTEGER NOT NULL,
-      responsibility TEXT,
-      organization TEXT,
-      independentWork TEXT,
-      collaboration TEXT,
-      initiative TEXT,
-      selfRegulation TEXT,
-      FOREIGN KEY (studentId) REFERENCES students(id),
-      FOREIGN KEY (classId) REFERENCES classes(id)
-    )`);
-
-    db.run(`CREATE TABLE IF NOT EXISTS settings (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      userId INTEGER NOT NULL,
-      geminiApiKey TEXT,
-      gradeFormat TEXT DEFAULT 'percentage',
-      theme TEXT DEFAULT 'light',
-      emailUser TEXT,
-      emailPass TEXT,
-      FOREIGN KEY (userId) REFERENCES users(id)
-    )`);
-    // Migration: add email columns if they don't exist
-    db.run(`ALTER TABLE settings ADD COLUMN emailUser TEXT`, () => {});
-    db.run(`ALTER TABLE settings ADD COLUMN emailPass TEXT`, () => {});
-
-    db.run(`CREATE TABLE IF NOT EXISTS passwordResets (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      userId INTEGER NOT NULL,
-      token TEXT NOT NULL UNIQUE,
-      expiresAt INTEGER NOT NULL,
-      used INTEGER DEFAULT 0,
-      FOREIGN KEY (userId) REFERENCES users(id)
-    )`);
-
-    // Class context saved per subject per term
-    db.run(`CREATE TABLE IF NOT EXISTS classContexts (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      classId INTEGER NOT NULL,
-      subject TEXT NOT NULL,
-      term TEXT NOT NULL DEFAULT 'Term 1',
-      context TEXT DEFAULT '',
-      UNIQUE(classId, subject, term),
-      FOREIGN KEY (classId) REFERENCES classes(id)
-    )`);
-
-    // Per-student notes saved per subject per term
-    db.run(`CREATE TABLE IF NOT EXISTS studentNotes (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      studentId INTEGER NOT NULL,
-      classId INTEGER NOT NULL,
-      subject TEXT,
-      term TEXT NOT NULL DEFAULT 'Term 1',
-      strengths TEXT DEFAULT '[]',
-      struggles TEXT DEFAULT '[]',
-      customContext TEXT DEFAULT '',
-      UNIQUE(studentId, classId, subject, term),
-      FOREIGN KEY (studentId) REFERENCES students(id)
-    )`);
-
-    // Migrations — all silently ignored if column already exists
-    db.run(`ALTER TABLE assignments ADD COLUMN subject TEXT`, () => {});
-    db.run(`ALTER TABLE comments ADD COLUMN subject TEXT`, () => {});
-    db.run(`ALTER TABLE comments ADD COLUMN term TEXT`, () => {});
-    db.run(`ALTER TABLE grades ADD COLUMN assignmentId INTEGER`, () => {});
-    db.run(`ALTER TABLE learningSkills ADD COLUMN organization TEXT`, () => {});
-    db.run(`ALTER TABLE learningSkills ADD COLUMN independentWork TEXT`, () => {});
-    db.run(`ALTER TABLE learningSkills ADD COLUMN term TEXT`, () => {});
-    db.run(`ALTER TABLE students ADD COLUMN classNotes TEXT`, () => {});
-    // Migrate classes table: add plural columns if old singular columns exist
-    db.run(`ALTER TABLE classes ADD COLUMN grades TEXT`, () => {});
-    db.run(`ALTER TABLE classes ADD COLUMN subjects TEXT`, () => {});
-    // Populate new plural columns from old singular columns where not yet set
-    db.run(`UPDATE classes SET grades = json_array(grade) WHERE grades IS NULL AND grade IS NOT NULL`, () => {});
-    db.run(`UPDATE classes SET subjects = json_array(subject) WHERE subjects IS NULL AND subject IS NOT NULL`, () => {});
-
-    console.log('Database tables initialized');
-  });
+// Helper: convert ?-style placeholders to $1,$2... for PostgreSQL
+function toPostgres(sql) {
+  let i = 0;
+  return sql.replace(/\?/g, () => `$${++i}`);
 }
 
-function dbRun(sql, params = []) {
-  return new Promise((resolve, reject) => {
-    db.run(sql, params, function(err) {
-      if (err) reject(err);
-      else resolve(this);
-    });
-  });
+async function dbRun(sql, params = []) {
+  const { rows } = await pool.query(toPostgres(sql), params);
+  return rows[0] || {};
 }
-function dbGet(sql, params = []) {
-  return new Promise((resolve, reject) => {
-    db.get(sql, params, (err, row) => {
-      if (err) reject(err);
-      else resolve(row);
-    });
-  });
+async function dbGet(sql, params = []) {
+  const { rows } = await pool.query(toPostgres(sql), params);
+  return rows[0] || null;
 }
-function dbAll(sql, params = []) {
-  return new Promise((resolve, reject) => {
-    db.all(sql, params, (err, rows) => {
-      if (err) reject(err);
-      else resolve(rows);
-    });
-  });
+async function dbAll(sql, params = []) {
+  const { rows } = await pool.query(toPostgres(sql), params);
+  return rows;
 }
+
+async function initializeDatabase() {
+  await pool.query(`CREATE TABLE IF NOT EXISTS users (
+    id SERIAL PRIMARY KEY,
+    email TEXT UNIQUE NOT NULL,
+    password TEXT NOT NULL,
+    name TEXT,
+    "createdAt" TIMESTAMPTZ DEFAULT NOW()
+  )`);
+
+  await pool.query(`CREATE TABLE IF NOT EXISTS classes (
+    id SERIAL PRIMARY KEY,
+    "userId" INTEGER NOT NULL REFERENCES users(id),
+    grades TEXT,
+    subjects TEXT,
+    "classType" TEXT,
+    "schoolType" TEXT,
+    "className" TEXT,
+    "createdAt" TIMESTAMPTZ DEFAULT NOW()
+  )`);
+
+  await pool.query(`CREATE TABLE IF NOT EXISTS students (
+    id SERIAL PRIMARY KEY,
+    "classId" INTEGER NOT NULL REFERENCES classes(id) ON DELETE CASCADE,
+    "firstName" TEXT,
+    "lastName" TEXT,
+    pronouns TEXT,
+    "classNotes" TEXT,
+    "createdAt" TIMESTAMPTZ DEFAULT NOW()
+  )`);
+
+  await pool.query(`CREATE TABLE IF NOT EXISTS assignments (
+    id SERIAL PRIMARY KEY,
+    "classId" INTEGER NOT NULL REFERENCES classes(id) ON DELETE CASCADE,
+    subject TEXT,
+    name TEXT NOT NULL,
+    "maxGrade" REAL DEFAULT 100,
+    weight REAL DEFAULT 1,
+    category TEXT,
+    "createdAt" TIMESTAMPTZ DEFAULT NOW()
+  )`);
+
+  await pool.query(`CREATE TABLE IF NOT EXISTS grades (
+    id SERIAL PRIMARY KEY,
+    "studentId" INTEGER NOT NULL REFERENCES students(id) ON DELETE CASCADE,
+    "assignmentId" INTEGER REFERENCES assignments(id) ON DELETE CASCADE,
+    "classId" INTEGER NOT NULL REFERENCES classes(id) ON DELETE CASCADE,
+    "assignmentName" TEXT,
+    "assignmentWeight" REAL DEFAULT 1,
+    grade REAL,
+    "maxGrade" REAL DEFAULT 100,
+    "dateSubmitted" TIMESTAMPTZ DEFAULT NOW()
+  )`);
+
+  await pool.query(`CREATE TABLE IF NOT EXISTS comments (
+    id SERIAL PRIMARY KEY,
+    "studentId" INTEGER NOT NULL REFERENCES students(id) ON DELETE CASCADE,
+    "classId" INTEGER NOT NULL REFERENCES classes(id) ON DELETE CASCADE,
+    subject TEXT,
+    "commentType" TEXT,
+    content TEXT,
+    draft BOOLEAN DEFAULT TRUE,
+    term TEXT DEFAULT 'Term 1',
+    "createdAt" TIMESTAMPTZ DEFAULT NOW(),
+    "updatedAt" TIMESTAMPTZ DEFAULT NOW()
+  )`);
+
+  await pool.query(`CREATE TABLE IF NOT EXISTS "learningSkills" (
+    id SERIAL PRIMARY KEY,
+    "studentId" INTEGER NOT NULL REFERENCES students(id) ON DELETE CASCADE,
+    "classId" INTEGER NOT NULL REFERENCES classes(id) ON DELETE CASCADE,
+    responsibility TEXT,
+    organization TEXT,
+    "independentWork" TEXT,
+    collaboration TEXT,
+    initiative TEXT,
+    "selfRegulation" TEXT,
+    term TEXT DEFAULT 'Term 1'
+  )`);
+
+  await pool.query(`CREATE TABLE IF NOT EXISTS settings (
+    id SERIAL PRIMARY KEY,
+    "userId" INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    "geminiApiKey" TEXT,
+    "gradeFormat" TEXT DEFAULT 'percentage',
+    theme TEXT DEFAULT 'light',
+    "emailUser" TEXT,
+    "emailPass" TEXT
+  )`);
+
+  await pool.query(`CREATE TABLE IF NOT EXISTS "passwordResets" (
+    id SERIAL PRIMARY KEY,
+    "userId" INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    token TEXT NOT NULL UNIQUE,
+    "expiresAt" BIGINT NOT NULL,
+    used INTEGER DEFAULT 0
+  )`);
+
+  await pool.query(`CREATE TABLE IF NOT EXISTS "classContexts" (
+    id SERIAL PRIMARY KEY,
+    "classId" INTEGER NOT NULL REFERENCES classes(id) ON DELETE CASCADE,
+    subject TEXT NOT NULL,
+    term TEXT NOT NULL DEFAULT 'Term 1',
+    context TEXT DEFAULT '',
+    UNIQUE("classId", subject, term)
+  )`);
+
+  await pool.query(`CREATE TABLE IF NOT EXISTS "studentNotes" (
+    id SERIAL PRIMARY KEY,
+    "studentId" INTEGER NOT NULL REFERENCES students(id) ON DELETE CASCADE,
+    "classId" INTEGER NOT NULL REFERENCES classes(id) ON DELETE CASCADE,
+    subject TEXT,
+    term TEXT NOT NULL DEFAULT 'Term 1',
+    strengths TEXT DEFAULT '[]',
+    struggles TEXT DEFAULT '[]',
+    "customContext" TEXT DEFAULT '',
+    UNIQUE("studentId", "classId", subject, term)
+  )`);
+
+  console.log('Database tables ready');
+}
+
+initializeDatabase().catch(console.error);
 
 function verifyToken(req, res, next) {
   const token = req.headers.authorization?.split(' ')[1];
@@ -218,15 +183,18 @@ function verifyToken(req, res, next) {
 
 app.post('/api/auth/register', async (req, res) => {
   try {
-    const { email, password, name } = req.body;
+    const { email, password, name, inviteCode } = req.body;
+    if (INVITE_CODE && inviteCode !== INVITE_CODE) {
+      return res.status(403).json({ error: 'Invalid invite code. Please contact the administrator.' });
+    }
     const hashedPassword = await bcrypt.hash(password, 10);
     const result = await dbRun(
-      'INSERT INTO users (email, password, name) VALUES (?, ?, ?)',
+      'INSERT INTO users (email, password, name) VALUES (?, ?, ?) RETURNING id',
       [email, hashedPassword, name]
     );
-    await dbRun('INSERT INTO settings (userId) VALUES (?)', [result.lastID]);
-    const token = jwt.sign({ id: result.lastID, email }, JWT_SECRET);
-    res.json({ token, userId: result.lastID, name });
+    await dbRun('INSERT INTO settings ("userId") VALUES (?) RETURNING id', [result.id]);
+    const token = jwt.sign({ id: result.id, email }, JWT_SECRET);
+    res.json({ token, userId: result.id, name });
   } catch (error) {
     res.status(400).json({ error: error.message });
   }
@@ -258,11 +226,9 @@ app.post('/api/auth/forgot-password', async (req, res) => {
     if (!user) return res.status(400).json({ error: 'No account found with that email address' });
 
     if (!newPassword) {
-      // Step 1: just verify the email exists
       return res.json({ exists: true, name: user.name });
     }
 
-    // Step 2: set the new password
     if (newPassword.length < 6) return res.status(400).json({ error: 'Password must be at least 6 characters' });
     const hashed = await bcrypt.hash(newPassword, 10);
     await dbRun('UPDATE users SET password = ? WHERE id = ?', [hashed, user.id]);
@@ -278,13 +244,13 @@ app.post('/api/auth/reset-password', async (req, res) => {
     if (!token || !password) return res.status(400).json({ error: 'Token and password are required' });
     if (password.length < 6) return res.status(400).json({ error: 'Password must be at least 6 characters' });
 
-    const reset = await dbGet('SELECT * FROM passwordResets WHERE token = ? AND used = 0', [token]);
+    const reset = await dbGet('SELECT * FROM "passwordResets" WHERE token = ? AND used = 0', [token]);
     if (!reset) return res.status(400).json({ error: 'Invalid or expired reset link' });
-    if (Date.now() > reset.expiresAt) return res.status(400).json({ error: 'Reset link has expired. Please request a new one.' });
+    if (Date.now() > Number(reset.expiresat || reset.expiresAt)) return res.status(400).json({ error: 'Reset link has expired. Please request a new one.' });
 
     const hashed = await bcrypt.hash(password, 10);
-    await dbRun('UPDATE users SET password = ? WHERE id = ?', [hashed, reset.userId]);
-    await dbRun('UPDATE passwordResets SET used = 1 WHERE id = ?', [reset.id]);
+    await dbRun('UPDATE users SET password = ? WHERE id = ?', [hashed, reset.userid || reset.userId]);
+    await dbRun('UPDATE "passwordResets" SET used = 1 WHERE id = ?', [reset.id]);
 
     res.json({ success: true });
   } catch (error) {
@@ -300,10 +266,10 @@ app.post('/api/classes', verifyToken, async (req, res) => {
     const gradesJson = JSON.stringify(Array.isArray(grades) ? grades : [grades]);
     const subjectsJson = JSON.stringify(Array.isArray(subjects) ? subjects : [subjects]);
     const result = await dbRun(
-      'INSERT INTO classes (userId, grades, subjects, classType, schoolType, className) VALUES (?, ?, ?, ?, ?, ?)',
+      'INSERT INTO classes ("userId", grades, subjects, "classType", "schoolType", "className") VALUES (?, ?, ?, ?, ?, ?) RETURNING id',
       [req.userId, gradesJson, subjectsJson, classType, schoolType, className]
     );
-    const cls = { id: result.lastID, grades: JSON.parse(gradesJson), subjects: JSON.parse(subjectsJson), classType, schoolType, className };
+    const cls = { id: result.id, grades: JSON.parse(gradesJson), subjects: JSON.parse(subjectsJson), classType, schoolType, className };
     res.json(cls);
   } catch (error) {
     res.status(400).json({ error: error.message });
@@ -312,7 +278,7 @@ app.post('/api/classes', verifyToken, async (req, res) => {
 
 app.get('/api/classes', verifyToken, async (req, res) => {
   try {
-    const classes = await dbAll('SELECT * FROM classes WHERE userId = ?', [req.userId]);
+    const classes = await dbAll('SELECT * FROM classes WHERE "userId" = ?', [req.userId]);
     res.json(classes.map(parseClass));
   } catch (error) {
     res.status(400).json({ error: error.message });
@@ -321,7 +287,7 @@ app.get('/api/classes', verifyToken, async (req, res) => {
 
 app.get('/api/classes/:classId', verifyToken, async (req, res) => {
   try {
-    const cls = await dbGet('SELECT * FROM classes WHERE id = ? AND userId = ?', [req.params.classId, req.userId]);
+    const cls = await dbGet('SELECT * FROM classes WHERE id = ? AND "userId" = ?', [req.params.classId, req.userId]);
     res.json(cls ? parseClass(cls) : null);
   } catch (error) {
     res.status(400).json({ error: error.message });
@@ -334,10 +300,10 @@ app.put('/api/classes/:classId', verifyToken, async (req, res) => {
     const gradesJson = JSON.stringify(Array.isArray(grades) ? grades : [grades]);
     const subjectsJson = JSON.stringify(Array.isArray(subjects) ? subjects : [subjects]);
     await dbRun(
-      'UPDATE classes SET grades = ?, subjects = ?, classType = ?, schoolType = ?, className = ? WHERE id = ? AND userId = ?',
+      'UPDATE classes SET grades = ?, subjects = ?, "classType" = ?, "schoolType" = ?, "className" = ? WHERE id = ? AND "userId" = ?',
       [gradesJson, subjectsJson, classType, schoolType, className, req.params.classId, req.userId]
     );
-    const cls = await dbGet('SELECT * FROM classes WHERE id = ? AND userId = ?', [req.params.classId, req.userId]);
+    const cls = await dbGet('SELECT * FROM classes WHERE id = ? AND "userId" = ?', [req.params.classId, req.userId]);
     res.json(cls ? parseClass(cls) : null);
   } catch (error) {
     res.status(400).json({ error: error.message });
@@ -346,7 +312,7 @@ app.put('/api/classes/:classId', verifyToken, async (req, res) => {
 
 app.delete('/api/classes/:classId', verifyToken, async (req, res) => {
   try {
-    await dbRun('DELETE FROM classes WHERE id = ? AND userId = ?', [req.params.classId, req.userId]);
+    await dbRun('DELETE FROM classes WHERE id = ? AND "userId" = ?', [req.params.classId, req.userId]);
     res.json({ success: true });
   } catch (error) {
     res.status(400).json({ error: error.message });
@@ -354,16 +320,23 @@ app.delete('/api/classes/:classId', verifyToken, async (req, res) => {
 });
 
 function parseClass(cls) {
+  if (!cls) return null;
   try {
     return {
       ...cls,
+      id: cls.id,
+      className: cls.className || cls.classname,
+      classType: cls.classType || cls.classtype,
+      schoolType: cls.schoolType || cls.schooltype,
       grades: cls.grades ? JSON.parse(cls.grades) : [],
       subjects: cls.subjects ? JSON.parse(cls.subjects) : [],
     };
   } catch {
-    // Legacy single-value fields
     return {
       ...cls,
+      className: cls.className || cls.classname,
+      classType: cls.classType || cls.classtype,
+      schoolType: cls.schoolType || cls.schooltype,
       grades: cls.grades ? [cls.grades] : [],
       subjects: cls.subjects ? [cls.subjects] : [],
     };
@@ -376,7 +349,7 @@ app.post('/api/classes/:classId/students/import', verifyToken, upload.single('fi
   try {
     const file = req.file;
     const classId = req.params.classId;
-    const classData = await dbGet('SELECT * FROM classes WHERE id = ? AND userId = ?', [classId, req.userId]);
+    const classData = await dbGet('SELECT * FROM classes WHERE id = ? AND "userId" = ?', [classId, req.userId]);
     if (!classData) return res.status(403).json({ error: 'Unauthorized' });
 
     const workbook = xlsx.readFile(file.path);
@@ -390,10 +363,10 @@ app.post('/api/classes/:classId/students/import', verifyToken, upload.single('fi
       const pronouns = row.pronouns || row.Pronouns || '';
       if (!firstName) continue;
       const result = await dbRun(
-        'INSERT INTO students (classId, firstName, lastName, pronouns) VALUES (?, ?, ?, ?)',
+        'INSERT INTO students ("classId", "firstName", "lastName", pronouns) VALUES (?, ?, ?, ?) RETURNING id',
         [classId, firstName, lastName, pronouns]
       );
-      students.push({ id: result.lastID, firstName, lastName, pronouns });
+      students.push({ id: result.id, firstName, lastName, pronouns });
     }
 
     fs.unlink(file.path, () => {});
@@ -407,13 +380,13 @@ app.post('/api/classes/:classId/students', verifyToken, async (req, res) => {
   try {
     const { firstName, lastName, pronouns } = req.body;
     const classId = req.params.classId;
-    const classData = await dbGet('SELECT * FROM classes WHERE id = ? AND userId = ?', [classId, req.userId]);
+    const classData = await dbGet('SELECT * FROM classes WHERE id = ? AND "userId" = ?', [classId, req.userId]);
     if (!classData) return res.status(403).json({ error: 'Unauthorized' });
     const result = await dbRun(
-      'INSERT INTO students (classId, firstName, lastName, pronouns) VALUES (?, ?, ?, ?)',
+      'INSERT INTO students ("classId", "firstName", "lastName", pronouns) VALUES (?, ?, ?, ?) RETURNING id',
       [classId, firstName, lastName || '', pronouns || '']
     );
-    res.json({ id: result.lastID, firstName, lastName: lastName || '', pronouns: pronouns || '' });
+    res.json({ id: result.id, firstName, lastName: lastName || '', pronouns: pronouns || '' });
   } catch (error) {
     res.status(400).json({ error: error.message });
   }
@@ -423,7 +396,7 @@ app.put('/api/students/:studentId/class-notes', verifyToken, async (req, res) =>
   try {
     const { classNotes } = req.body;
     await dbRun(
-      `UPDATE students SET classNotes = ? WHERE id = ? AND classId IN (SELECT id FROM classes WHERE userId = ?)`,
+      `UPDATE students SET "classNotes" = ? WHERE id = ? AND "classId" IN (SELECT id FROM classes WHERE "userId" = ?)`,
       [classNotes, req.params.studentId, req.userId]
     );
     res.json({ success: true });
@@ -435,7 +408,7 @@ app.put('/api/students/:studentId/class-notes', verifyToken, async (req, res) =>
 app.get('/api/classes/:classId/students', verifyToken, async (req, res) => {
   try {
     const students = await dbAll(
-      'SELECT s.* FROM students s JOIN classes c ON s.classId = c.id WHERE c.userId = ? AND s.classId = ? ORDER BY s.firstName',
+      'SELECT s.* FROM students s JOIN classes c ON s."classId" = c.id WHERE c."userId" = ? AND s."classId" = ? ORDER BY s."firstName"',
       [req.userId, req.params.classId]
     );
     res.json(students);
@@ -459,10 +432,10 @@ app.post('/api/classes/:classId/assignments', verifyToken, async (req, res) => {
   try {
     const { name, maxGrade, weight, category, subject } = req.body;
     const result = await dbRun(
-      'INSERT INTO assignments (classId, subject, name, maxGrade, weight, category) VALUES (?, ?, ?, ?, ?, ?)',
+      'INSERT INTO assignments ("classId", subject, name, "maxGrade", weight, category) VALUES (?, ?, ?, ?, ?, ?) RETURNING id',
       [req.params.classId, subject || null, name, maxGrade || 100, weight || 1, category || '']
     );
-    res.json({ id: result.lastID, classId: req.params.classId, subject: subject || null, name, maxGrade: maxGrade || 100, weight: weight || 1, category: category || '' });
+    res.json({ id: result.id, classId: req.params.classId, subject: subject || null, name, maxGrade: maxGrade || 100, weight: weight || 1, category: category || '' });
   } catch (error) {
     res.status(400).json({ error: error.message });
   }
@@ -472,8 +445,8 @@ app.get('/api/classes/:classId/assignments', verifyToken, async (req, res) => {
   try {
     const { subject } = req.query;
     const assignments = subject
-      ? await dbAll('SELECT * FROM assignments WHERE classId = ? AND subject = ? ORDER BY createdAt', [req.params.classId, subject])
-      : await dbAll('SELECT * FROM assignments WHERE classId = ? ORDER BY createdAt', [req.params.classId]);
+      ? await dbAll('SELECT * FROM assignments WHERE "classId" = ? AND subject = ? ORDER BY "createdAt"', [req.params.classId, subject])
+      : await dbAll('SELECT * FROM assignments WHERE "classId" = ? ORDER BY "createdAt"', [req.params.classId]);
     res.json(assignments);
   } catch (error) {
     res.status(400).json({ error: error.message });
@@ -498,13 +471,13 @@ app.get('/api/classes/:classId/gradebook', verifyToken, async (req, res) => {
     const classId = req.params.classId;
     const { subject } = req.query;
     const students = await dbAll(
-      'SELECT s.* FROM students s JOIN classes c ON s.classId = c.id WHERE c.userId = ? AND s.classId = ? ORDER BY s.firstName',
+      'SELECT s.* FROM students s JOIN classes c ON s."classId" = c.id WHERE c."userId" = ? AND s."classId" = ? ORDER BY s."firstName"',
       [req.userId, classId]
     );
     const assignments = subject
-      ? await dbAll('SELECT * FROM assignments WHERE classId = ? AND subject = ? ORDER BY createdAt', [classId, subject])
-      : await dbAll('SELECT * FROM assignments WHERE classId = ? ORDER BY createdAt', [classId]);
-    const allGrades = await dbAll('SELECT * FROM grades WHERE classId = ?', [classId]);
+      ? await dbAll('SELECT * FROM assignments WHERE "classId" = ? AND subject = ? ORDER BY "createdAt"', [classId, subject])
+      : await dbAll('SELECT * FROM assignments WHERE "classId" = ? ORDER BY "createdAt"', [classId]);
+    const allGrades = await dbAll('SELECT * FROM grades WHERE "classId" = ?', [classId]);
 
     // Build grade matrix: { studentId: { assignmentId: { id, grade } } }
     const gradeMatrix = {};
@@ -514,6 +487,10 @@ app.get('/api/classes/:classId/gradebook', verifyToken, async (req, res) => {
     for (const g of allGrades) {
       if (g.assignmentId && gradeMatrix[g.studentId]) {
         gradeMatrix[g.studentId][g.assignmentId] = { id: g.id, grade: g.grade };
+      }
+      // pg returns lowercase keys
+      if (g.assignmentid && gradeMatrix[g.studentid]) {
+        gradeMatrix[g.studentid][g.assignmentid] = { id: g.id, grade: g.grade };
       }
     }
 
@@ -532,9 +509,12 @@ app.put('/api/classes/:classId/grades/upsert', verifyToken, async (req, res) => 
     // Get assignment for maxGrade
     const assignment = await dbGet('SELECT * FROM assignments WHERE id = ?', [assignmentId]);
     if (!assignment) return res.status(404).json({ error: 'Assignment not found' });
+    // normalise pg lowercase keys
+    assignment.maxGrade = assignment.maxGrade ?? assignment.maxgrade ?? 100;
+    assignment.weight = assignment.weight ?? 1;
 
     const existing = await dbGet(
-      'SELECT id FROM grades WHERE studentId = ? AND assignmentId = ?',
+      'SELECT id FROM grades WHERE "studentId" = ? AND "assignmentId" = ?',
       [studentId, assignmentId]
     );
 
@@ -543,10 +523,10 @@ app.put('/api/classes/:classId/grades/upsert', verifyToken, async (req, res) => 
       res.json({ id: existing.id, grade });
     } else {
       const result = await dbRun(
-        'INSERT INTO grades (studentId, assignmentId, classId, assignmentName, grade, maxGrade, assignmentWeight) VALUES (?, ?, ?, ?, ?, ?, ?)',
+        'INSERT INTO grades ("studentId", "assignmentId", "classId", "assignmentName", grade, "maxGrade", "assignmentWeight") VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING id',
         [studentId, assignmentId, classId, assignment.name, grade, assignment.maxGrade, assignment.weight]
       );
-      res.json({ id: result.lastID, grade });
+      res.json({ id: result.id, grade });
     }
   } catch (error) {
     res.status(400).json({ error: error.message });
@@ -568,11 +548,11 @@ app.get('/api/classes/:classId/students/:studentId/overall-grade', verifyToken, 
     const { subject } = req.query;
     const grades = subject
       ? await dbAll(
-          'SELECT g.*, a.maxGrade as aMaxGrade, a.weight as aWeight FROM grades g JOIN assignments a ON g.assignmentId = a.id WHERE g.studentId = ? AND g.classId = ? AND a.subject = ?',
+          'SELECT g.*, a."maxGrade" as "aMaxGrade", a.weight as "aWeight" FROM grades g JOIN assignments a ON g."assignmentId" = a.id WHERE g."studentId" = ? AND g."classId" = ? AND a.subject = ?',
           [req.params.studentId, req.params.classId, subject]
         )
       : await dbAll(
-          'SELECT g.*, a.maxGrade as aMaxGrade, a.weight as aWeight FROM grades g LEFT JOIN assignments a ON g.assignmentId = a.id WHERE g.studentId = ? AND g.classId = ?',
+          'SELECT g.*, a."maxGrade" as "aMaxGrade", a.weight as "aWeight" FROM grades g LEFT JOIN assignments a ON g."assignmentId" = a.id WHERE g."studentId" = ? AND g."classId" = ?',
           [req.params.studentId, req.params.classId]
         );
 
@@ -599,8 +579,9 @@ app.post('/api/classes/:classId/generate-comment', verifyToken, async (req, res)
     const { studentId, overallGrade, classContext, strengths, struggles, commentType, quickObservations, customContext, subject, targetWordCount, term, previousTermComments } = req.body;
     const classId = req.params.classId;
 
-    const settings = await dbGet('SELECT geminiApiKey FROM settings WHERE userId = ?', [req.userId]);
-    if (!settings?.geminiApiKey) {
+    const settings = await dbGet('SELECT "geminiApiKey" FROM settings WHERE "userId" = ?', [req.userId]);
+    const apiKey = settings?.geminiApiKey || settings?.geminiApikey;
+    if (!apiKey) {
       return res.status(400).json({ error: 'Gemini API key not configured in Settings' });
     }
 
@@ -704,17 +685,17 @@ Writing rules:
 Write only the comment text.`;
     }
 
-    const genAI = new GoogleGenerativeAI(settings.geminiApiKey);
+    const genAI = new GoogleGenerativeAI(apiKey);
     const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
     const result = await model.generateContent(prompt);
     const commentText = result.response.text();
 
     const commentResult = await dbRun(
-      'INSERT INTO comments (studentId, classId, subject, commentType, content, draft, term) VALUES (?, ?, ?, ?, ?, ?, ?)',
-      [studentId, classId, subject || null, commentType, commentText, 1, term || 'Term 1']
+      'INSERT INTO comments ("studentId", "classId", subject, "commentType", content, draft, term) VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING id',
+      [studentId, classId, subject || null, commentType, commentText, true, term || 'Term 1']
     );
 
-    res.json({ id: commentResult.lastID, content: commentText, draft: true, commentType, subject: subject || null, term: term || 'Term 1' });
+    res.json({ id: commentResult.id, content: commentText, draft: true, commentType, subject: subject || null, term: term || 'Term 1' });
   } catch (error) {
     console.error('Error generating comment:', error);
     res.status(400).json({ error: error.message });
@@ -741,11 +722,11 @@ function getOntarioLevel(percentage) {
 app.get('/api/classes/:classId/students/:studentId/comments', verifyToken, async (req, res) => {
   try {
     const { subject, term } = req.query;
-    let sql = 'SELECT * FROM comments WHERE studentId = ? AND classId = ?';
+    let sql = 'SELECT * FROM comments WHERE "studentId" = ? AND "classId" = ?';
     const params = [req.params.studentId, req.params.classId];
     if (subject) { sql += ' AND subject = ?'; params.push(subject); }
     if (term) { sql += ' AND term = ?'; params.push(term); }
-    sql += ' ORDER BY createdAt DESC';
+    sql += ' ORDER BY "createdAt" DESC';
     const comments = await dbAll(sql, params);
     res.json(comments);
   } catch (error) {
@@ -759,7 +740,7 @@ app.get('/api/classes/:classId/context', verifyToken, async (req, res) => {
   try {
     const { subject, term } = req.query;
     const ctx = await dbGet(
-      'SELECT * FROM classContexts WHERE classId = ? AND subject = ? AND term = ?',
+      'SELECT * FROM "classContexts" WHERE "classId" = ? AND subject = ? AND term = ?',
       [req.params.classId, subject || '', term || 'Term 1']
     );
     res.json(ctx || { context: '' });
@@ -772,8 +753,8 @@ app.put('/api/classes/:classId/context', verifyToken, async (req, res) => {
   try {
     const { subject, term, context } = req.body;
     await dbRun(
-      `INSERT INTO classContexts (classId, subject, term, context) VALUES (?, ?, ?, ?)
-       ON CONFLICT(classId, subject, term) DO UPDATE SET context = excluded.context`,
+      `INSERT INTO "classContexts" ("classId", subject, term, context) VALUES (?, ?, ?, ?)
+       ON CONFLICT("classId", subject, term) DO UPDATE SET context = EXCLUDED.context`,
       [req.params.classId, subject || '', term || 'Term 1', context]
     );
     res.json({ success: true });
@@ -788,7 +769,7 @@ app.get('/api/classes/:classId/students/:studentId/notes', verifyToken, async (r
   try {
     const { subject, term } = req.query;
     const notes = await dbGet(
-      'SELECT * FROM studentNotes WHERE studentId = ? AND classId = ? AND subject IS ? AND term = ?',
+      'SELECT * FROM "studentNotes" WHERE "studentId" = ? AND "classId" = ? AND subject IS NOT DISTINCT FROM ? AND term = ?',
       [req.params.studentId, req.params.classId, subject || null, term || 'Term 1']
     );
     res.json(notes ? {
@@ -805,12 +786,12 @@ app.put('/api/classes/:classId/students/:studentId/notes', verifyToken, async (r
   try {
     const { subject, term, strengths, struggles, customContext } = req.body;
     await dbRun(
-      `INSERT INTO studentNotes (studentId, classId, subject, term, strengths, struggles, customContext)
+      `INSERT INTO "studentNotes" ("studentId", "classId", subject, term, strengths, struggles, "customContext")
        VALUES (?, ?, ?, ?, ?, ?, ?)
-       ON CONFLICT(studentId, classId, subject, term) DO UPDATE SET
-         strengths = excluded.strengths,
-         struggles = excluded.struggles,
-         customContext = excluded.customContext`,
+       ON CONFLICT("studentId", "classId", subject, term) DO UPDATE SET
+         strengths = EXCLUDED.strengths,
+         struggles = EXCLUDED.struggles,
+         "customContext" = EXCLUDED."customContext"`,
       [req.params.studentId, req.params.classId, subject || null, term || 'Term 1',
        JSON.stringify(strengths || []), JSON.stringify(struggles || []), customContext || '']
     );
@@ -824,7 +805,7 @@ app.put('/api/comments/:commentId', verifyToken, async (req, res) => {
   try {
     const { content, draft } = req.body;
     await dbRun(
-      'UPDATE comments SET content = ?, draft = ?, updatedAt = CURRENT_TIMESTAMP WHERE id = ?',
+      'UPDATE comments SET content = ?, draft = ?, "updatedAt" = NOW() WHERE id = ?',
       [content, draft ?? 1, req.params.commentId]
     );
     res.json({ success: true });
@@ -903,10 +884,10 @@ app.post('/api/classes/:classId/bulk-comment', verifyToken, async (req, res) => 
       const personalised = personalise(commentText, student);
 
       const row = await dbRun(
-        'INSERT INTO comments (classId, studentId, content, draft, commentType, subject, term, createdAt, updatedAt) VALUES (?, ?, ?, 1, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)',
+        'INSERT INTO comments ("classId", "studentId", content, draft, "commentType", subject, term) VALUES (?, ?, ?, true, ?, ?, ?) RETURNING id',
         [req.params.classId, studentId, personalised, 'subject', subject, term]
       );
-      created.push({ id: row.lastID, studentId, content: personalised, draft: 1, commentType: 'subject', subject, term });
+      created.push({ id: row.id, studentId, content: personalised, draft: 1, commentType: 'subject', subject, term });
     }
     res.json({ created });
   } catch (error) {
@@ -919,8 +900,8 @@ app.post('/api/comments/bulk-delete', verifyToken, async (req, res) => {
   try {
     const { commentIds } = req.body;
     if (!commentIds?.length) return res.json({ success: true });
-    const placeholders = commentIds.map(() => '?').join(',');
-    await dbRun(`DELETE FROM comments WHERE id IN (${placeholders})`, commentIds);
+    const placeholders = commentIds.map((_, i) => `$${i + 1}`).join(',');
+    await pool.query(`DELETE FROM comments WHERE id IN (${placeholders})`, commentIds);
     res.json({ success: true });
   } catch (error) {
     res.status(400).json({ error: error.message });
@@ -931,13 +912,13 @@ app.post('/api/comments/bulk-delete', verifyToken, async (req, res) => {
 app.post('/api/comments/:commentId/refine', verifyToken, async (req, res) => {
   try {
     const { feedback, currentContent } = req.body;
-    const settings = await dbGet('SELECT geminiApiKey FROM settings WHERE userId = ?', [req.userId]);
+    const settings = await dbGet('SELECT "geminiApiKey" FROM settings WHERE "userId" = ?', [req.userId]);
     if (!settings?.geminiApiKey) return res.status(400).json({ error: 'Gemini API key not configured in Settings' });
 
     const comment = await dbGet('SELECT * FROM comments WHERE id = ?', [req.params.commentId]);
     if (!comment) return res.status(404).json({ error: 'Comment not found' });
 
-    const student = await dbGet('SELECT * FROM students WHERE id = ?', [comment.studentId]);
+    const student = await dbGet('SELECT * FROM students WHERE id = ?', [comment.studentId || comment.studentid]);
     const pronounObj = parsePronoun(student?.pronouns);
 
     const prompt = `You are revising an Ontario report card comment based on a teacher's feedback.
@@ -960,13 +941,13 @@ Instructions:
 - Maintain Ontario report card tone and language
 - Output only the revised comment text, nothing else`;
 
-    const genAI = new GoogleGenerativeAI(settings.geminiApiKey);
+    const genAI = new GoogleGenerativeAI(apiKey);
     const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
     const result = await model.generateContent(prompt);
     const refined = result.response.text();
 
     // Update comment in DB
-    await dbRun('UPDATE comments SET content = ?, updatedAt = CURRENT_TIMESTAMP WHERE id = ?', [refined, req.params.commentId]);
+    await dbRun('UPDATE comments SET content = ?, "updatedAt" = NOW() WHERE id = ?', [refined, req.params.commentId]);
 
     res.json({ content: refined });
   } catch (error) {
@@ -978,20 +959,20 @@ Instructions:
 app.get('/api/classes/:classId/export', verifyToken, async (req, res) => {
   try {
     const { term } = req.query;
-    const classInfo = parseClass(await dbGet('SELECT * FROM classes WHERE id = ? AND userId = ?', [req.params.classId, req.userId]));
+    const classInfo = parseClass(await dbGet('SELECT * FROM classes WHERE id = ? AND "userId" = ?', [req.params.classId, req.userId]));
     if (!classInfo) return res.status(403).json({ error: 'Unauthorized' });
 
     const students = await dbAll(
-      'SELECT s.* FROM students s WHERE s.classId = ? ORDER BY s.firstName',
+      'SELECT s.* FROM students s WHERE s."classId" = ? ORDER BY s."firstName"',
       [req.params.classId]
     );
 
-    let commentsSql = 'SELECT * FROM comments WHERE classId = ? AND draft = 0';
+    let commentsSql = 'SELECT * FROM comments WHERE "classId" = ? AND draft = false';
     const commentParams = [req.params.classId];
     if (term) { commentsSql += ' AND term = ?'; commentParams.push(term); }
     const allComments = await dbAll(commentsSql, commentParams);
 
-    let skillsSql = 'SELECT * FROM learningSkills WHERE classId = ?';
+    let skillsSql = 'SELECT * FROM "learningSkills" WHERE "classId" = ?';
     const skillsParams = [req.params.classId];
     if (term) { skillsSql += ' AND term = ?'; skillsParams.push(term); }
     const allSkills = await dbAll(skillsSql, skillsParams);
@@ -1001,8 +982,8 @@ app.get('/api/classes/:classId/export', verifyToken, async (req, res) => {
 
     const rows = students.map(student => {
       const row = { 'First Name': student.firstName, 'Last Name': student.lastName || '', Pronouns: student.pronouns || '' };
-      const studentComments = allComments.filter(c => c.studentId === student.id);
-      const studentSkills = allSkills.find(s => s.studentId === student.id) || {};
+      const studentComments = allComments.filter(c => (c.studentId || c.studentid) === student.id);
+      const studentSkills = allSkills.find(s => (s.studentId || s.studentid) === student.id) || {};
 
       subjects.forEach(sub => {
         const c = studentComments.find(c => c.commentType === 'subject' && c.subject === sub);
@@ -1052,17 +1033,17 @@ app.post('/api/classes/:classId/students/:studentId/learning-skills', verifyToke
     const { responsibility, organization, independentWork, collaboration, initiative, selfRegulation, term } = req.body;
     const t = term || 'Term 1';
     const existing = await dbGet(
-      'SELECT id FROM learningSkills WHERE studentId = ? AND classId = ? AND (term = ? OR term IS NULL)',
+      'SELECT id FROM "learningSkills" WHERE "studentId" = ? AND "classId" = ? AND (term = ? OR term IS NULL)',
       [req.params.studentId, req.params.classId, t]
     );
     if (existing) {
       await dbRun(
-        'UPDATE learningSkills SET responsibility=?, organization=?, independentWork=?, collaboration=?, initiative=?, selfRegulation=?, term=? WHERE id=?',
+        'UPDATE "learningSkills" SET responsibility=?, organization=?, "independentWork"=?, collaboration=?, initiative=?, "selfRegulation"=?, term=? WHERE id=?',
         [responsibility, organization, independentWork, collaboration, initiative, selfRegulation, t, existing.id]
       );
     } else {
       await dbRun(
-        'INSERT INTO learningSkills (studentId, classId, responsibility, organization, independentWork, collaboration, initiative, selfRegulation, term) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        'INSERT INTO "learningSkills" ("studentId", "classId", responsibility, organization, "independentWork", collaboration, initiative, "selfRegulation", term) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
         [req.params.studentId, req.params.classId, responsibility, organization, independentWork, collaboration, initiative, selfRegulation, t]
       );
     }
@@ -1076,7 +1057,7 @@ app.get('/api/classes/:classId/students/:studentId/learning-skills', verifyToken
   try {
     const { term } = req.query;
     const skills = await dbGet(
-      'SELECT * FROM learningSkills WHERE studentId = ? AND classId = ? AND (term = ? OR term IS NULL) ORDER BY id DESC LIMIT 1',
+      'SELECT * FROM "learningSkills" WHERE "studentId" = ? AND "classId" = ? AND (term = ? OR term IS NULL) ORDER BY id DESC LIMIT 1',
       [req.params.studentId, req.params.classId, term || 'Term 1']
     );
     res.json(skills || {});
@@ -1091,7 +1072,7 @@ app.put('/api/settings', verifyToken, async (req, res) => {
   try {
     const { geminiApiKey, gradeFormat, theme, emailUser, emailPass } = req.body;
     await dbRun(
-      'UPDATE settings SET geminiApiKey = ?, gradeFormat = ?, theme = ?, emailUser = ?, emailPass = ? WHERE userId = ?',
+      'UPDATE settings SET "geminiApiKey" = ?, "gradeFormat" = ?, theme = ?, "emailUser" = ?, "emailPass" = ? WHERE "userId" = ?',
       [geminiApiKey, gradeFormat, theme, emailUser || null, emailPass || null, req.userId]
     );
     res.json({ success: true });
@@ -1102,7 +1083,7 @@ app.put('/api/settings', verifyToken, async (req, res) => {
 
 app.get('/api/settings', verifyToken, async (req, res) => {
   try {
-    const settings = await dbGet('SELECT * FROM settings WHERE userId = ?', [req.userId]);
+    const settings = await dbGet('SELECT * FROM settings WHERE "userId" = ?', [req.userId]);
     res.json(settings || {});
   } catch (error) {
     res.status(400).json({ error: error.message });
