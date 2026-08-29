@@ -3,6 +3,8 @@ import { useNavigate } from 'react-router-dom';
 import axios from 'axios';
 import PasswordInput from '../components/PasswordInput';
 
+const API_URL = process.env.REACT_APP_API_URL || '${API_URL}';
+
 function Settings() {
   const [settings, setSettings] = useState({
     geminiApiKey: '',
@@ -24,7 +26,7 @@ function Settings() {
 
   const loadSettings = async () => {
     try {
-      const response = await axios.get('http://localhost:5000/api/settings', {
+      const response = await axios.get('${API_URL}/settings', {
         headers: { Authorization: `Bearer ${token}` },
       });
       setSettings(response.data);
@@ -40,7 +42,7 @@ function Settings() {
     setSuccess('');
 
     try {
-      await axios.put('http://localhost:5000/api/settings', settings, {
+      await axios.put('${API_URL}/settings', settings, {
         headers: { Authorization: `Bearer ${token}` },
       });
       setSuccess('Settings saved successfully!');

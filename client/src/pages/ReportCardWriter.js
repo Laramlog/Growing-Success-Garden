@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import axios from 'axios';
 
-const API = 'http://localhost:5000/api';
+const API = process.env.REACT_APP_API_URL || 'http://localhost:5000/api';
 
 const LEARNING_SKILLS = [
   { key: 'responsibility', label: 'Responsibility', description: 'Fulfils responsibilities and commitments within the learning environment' },

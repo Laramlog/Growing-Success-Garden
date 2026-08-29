@@ -3,7 +3,8 @@
   "version": "1.0.0",
   "type": "module",
   "scripts": {
-    "dev": "node server.js"
+    "dev": "node server.js",
+    "start": "node server.js"
   },
   "dependencies": {
     "@google/generative-ai": "^0.3.0",
@@ -14,7 +15,7 @@
     "jsonwebtoken": "^9.0.2",
     "multer": "^1.4.5-lts.1",
     "nodemailer": "^9.0.0",
-    "sqlite3": "^5.1.6",
+    "pg": "^8.11.3",
     "xlsx": "^0.18.5"
   }
 }
