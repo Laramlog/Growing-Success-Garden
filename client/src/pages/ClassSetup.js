@@ -20,24 +20,49 @@ function StickyNote({ student, onClose, onSave }) {
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const editorRef = useRef(null);
+  const savedRangeRef = useRef(null);
 
   useEffect(() => {
-    if (editorRef.current) {
-      editorRef.current.innerHTML = student.classNotes || '';
-      editorRef.current.focus();
-      // place cursor at end
-      const range = document.createRange();
-      const sel = window.getSelection();
-      range.selectNodeContents(editorRef.current);
-      range.collapse(false);
-      sel.removeAllRanges();
-      sel.addRange(range);
-    }
+    const el = editorRef.current;
+    if (!el) return;
+    el.innerHTML = student.classNotes || '';
+    el.focus();
+    const range = document.createRange();
+    range.selectNodeContents(el);
+    range.collapse(false);
+    const sel = window.getSelection();
+    sel.removeAllRanges();
+    sel.addRange(range);
   }, []);
 
+  const saveSelection = () => {
+    const sel = window.getSelection();
+    if (sel && sel.rangeCount > 0) {
+      savedRangeRef.current = sel.getRangeAt(0).cloneRange();
+    }
+  };
+
+  const restoreSelection = () => {
+    const el = editorRef.current;
+    if (!el) return;
+    el.focus();
+    const sel = window.getSelection();
+    sel.removeAllRanges();
+    if (savedRangeRef.current) {
+      sel.addRange(savedRangeRef.current);
+    } else {
+      // fallback: place cursor at end
+      const range = document.createRange();
+      range.selectNodeContents(el);
+      range.collapse(false);
+      sel.addRange(range);
+    }
+  };
+
   const exec = (cmd, value = null) => {
+    restoreSelection();
     document.execCommand(cmd, false, value);
-    editorRef.current?.focus();
+    saveSelection();
   };
 
   const handleSave = async () => {
@@ -48,16 +73,17 @@ function StickyNote({ student, onClose, onSave }) {
     setTimeout(() => setSaved(false), 1500);
   };
 
-  const btnStyle = (active) => ({
-    background: active ? '#e8d84a' : 'none',
+  const btnStyle = () => ({
+    background: 'none',
     border: '1px solid transparent',
     borderRadius: '4px',
-    padding: '2px 7px',
+    padding: '3px 8px',
     cursor: 'pointer',
     fontSize: '0.85rem',
     color: '#5a4e00',
     fontWeight: 600,
     lineHeight: 1.4,
+    userSelect: 'none',
   });
 
   return (
@@ -75,7 +101,7 @@ function StickyNote({ student, onClose, onSave }) {
           background: '#FFF9C4',
           borderRadius: '4px',
           boxShadow: '4px 6px 18px rgba(0,0,0,0.22), 0 1px 3px rgba(0,0,0,0.12)',
-          width: '340px',
+          width: '360px',
           padding: '0',
           fontFamily: 'inherit',
         }}
@@ -95,7 +121,6 @@ function StickyNote({ student, onClose, onSave }) {
           <button
             onClick={onClose}
             style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '1.1rem', color: '#5a4e00', lineHeight: 1, padding: '0 2px' }}
-            title="Close"
           >✕</button>
         </div>
 
@@ -103,47 +128,63 @@ function StickyNote({ student, onClose, onSave }) {
         <div style={{
           background: '#FFF59D',
           borderBottom: '1px solid #e8d84a',
-          padding: '4px 10px',
+          padding: '5px 10px',
           display: 'flex',
-          gap: '4px',
-          flexWrap: 'wrap',
+          gap: '2px',
           alignItems: 'center',
         }}>
-          <button style={btnStyle()} title="Bold" onMouseDown={e => { e.preventDefault(); exec('bold'); }}><strong>B</strong></button>
-          <button style={{ ...btnStyle(), fontStyle: 'italic' }} title="Italic" onMouseDown={e => { e.preventDefault(); exec('italic'); }}><em>I</em></button>
-          <button style={{ ...btnStyle(), textDecoration: 'underline' }} title="Underline" onMouseDown={e => { e.preventDefault(); exec('underline'); }}>U</button>
-          <span style={{ color: '#c9b800', margin: '0 2px' }}>|</span>
-          <button style={btnStyle()} title="Bullet list" onMouseDown={e => { e.preventDefault(); exec('insertUnorderedList'); }}>• List</button>
-          <button style={btnStyle()} title="Numbered list" onMouseDown={e => { e.preventDefault(); exec('insertOrderedList'); }}>1. List</button>
-          <span style={{ color: '#c9b800', margin: '0 2px' }}>|</span>
-          <button style={btnStyle()} title="Highlight" onMouseDown={e => { e.preventDefault(); exec('hiliteColor', '#ffe066'); }}>Highlight</button>
+          <button style={{ ...btnStyle(), fontWeight: 900 }} title="Bold (Ctrl+B)"
+            onMouseDown={e => { e.preventDefault(); exec('bold'); }}>B</button>
+          <button style={{ ...btnStyle(), fontStyle: 'italic', fontWeight: 400 }} title="Italic (Ctrl+I)"
+            onMouseDown={e => { e.preventDefault(); exec('italic'); }}>I</button>
+          <button style={{ ...btnStyle(), textDecoration: 'underline' }} title="Underline (Ctrl+U)"
+            onMouseDown={e => { e.preventDefault(); exec('underline'); }}>U</button>
+          <button style={{ ...btnStyle(), textDecoration: 'line-through', fontWeight: 400 }} title="Strikethrough"
+            onMouseDown={e => { e.preventDefault(); exec('strikeThrough'); }}>S</button>
+          <span style={{ color: '#c9b800', padding: '0 4px' }}>|</span>
+          <button style={btnStyle()} title="Bullet list"
+            onMouseDown={e => { e.preventDefault(); exec('insertUnorderedList'); }}>• List</button>
+          <button style={btnStyle()} title="Numbered list"
+            onMouseDown={e => { e.preventDefault(); exec('insertOrderedList'); }}>1. List</button>
+          <span style={{ color: '#c9b800', padding: '0 4px' }}>|</span>
+          <button style={{ ...btnStyle(), background: '#ffe066', border: '1px solid #e8d84a' }} title="Highlight"
+            onMouseDown={e => { e.preventDefault(); exec('hiliteColor', '#ffe066'); }}>HL</button>
+          <button style={btnStyle()} title="Remove highlight"
+            onMouseDown={e => { e.preventDefault(); exec('hiliteColor', 'transparent'); }}>✕HL</button>
         </div>
 
         {/* Editor */}
         <div style={{ padding: '10px 14px 14px' }}>
+          <style>{`
+            .sticky-editor:empty:before {
+              content: 'Write notes about this student…';
+              color: #b8a800;
+              pointer-events: none;
+            }
+            .sticky-editor ul { margin: 4px 0; padding-left: 20px; }
+            .sticky-editor ol { margin: 4px 0; padding-left: 20px; }
+            .sticky-editor li { margin: 2px 0; }
+          `}</style>
           <div
             ref={editorRef}
             contentEditable
             suppressContentEditableWarning
-            data-placeholder="Write notes about this student…"
+            className="sticky-editor"
+            onBlur={saveSelection}
+            onKeyUp={saveSelection}
+            onMouseUp={saveSelection}
             style={{
-              minHeight: '140px',
-              maxHeight: '260px',
+              minHeight: '150px',
+              maxHeight: '280px',
               overflowY: 'auto',
               outline: 'none',
               fontSize: '0.92rem',
               color: '#3a3000',
               lineHeight: '1.7',
               caretColor: '#3a3000',
+              wordBreak: 'break-word',
             }}
           />
-          <style>{`
-            [contenteditable]:empty:before {
-              content: attr(data-placeholder);
-              color: #b8a800;
-              pointer-events: none;
-            }
-          `}</style>
           <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '10px' }}>
             <button
               onClick={onClose}
