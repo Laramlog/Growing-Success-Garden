@@ -17,22 +17,48 @@ function NotepadIcon() {
 }
 
 function StickyNote({ student, onClose, onSave }) {
-  const [text, setText] = useState(student.classNotes || '');
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
-  const textareaRef = useRef(null);
+  const editorRef = useRef(null);
 
   useEffect(() => {
-    textareaRef.current?.focus();
+    if (editorRef.current) {
+      editorRef.current.innerHTML = student.classNotes || '';
+      editorRef.current.focus();
+      // place cursor at end
+      const range = document.createRange();
+      const sel = window.getSelection();
+      range.selectNodeContents(editorRef.current);
+      range.collapse(false);
+      sel.removeAllRanges();
+      sel.addRange(range);
+    }
   }, []);
+
+  const exec = (cmd, value = null) => {
+    document.execCommand(cmd, false, value);
+    editorRef.current?.focus();
+  };
 
   const handleSave = async () => {
     setSaving(true);
-    await onSave(student.id, text);
+    await onSave(student.id, editorRef.current?.innerHTML || '');
     setSaving(false);
     setSaved(true);
     setTimeout(() => setSaved(false), 1500);
   };
+
+  const btnStyle = (active) => ({
+    background: active ? '#e8d84a' : 'none',
+    border: '1px solid transparent',
+    borderRadius: '4px',
+    padding: '2px 7px',
+    cursor: 'pointer',
+    fontSize: '0.85rem',
+    color: '#5a4e00',
+    fontWeight: 600,
+    lineHeight: 1.4,
+  });
 
   return (
     <div
@@ -49,13 +75,12 @@ function StickyNote({ student, onClose, onSave }) {
           background: '#FFF9C4',
           borderRadius: '4px',
           boxShadow: '4px 6px 18px rgba(0,0,0,0.22), 0 1px 3px rgba(0,0,0,0.12)',
-          width: '320px',
+          width: '340px',
           padding: '0',
           fontFamily: 'inherit',
-          transform: 'rotate(-1deg)',
         }}
       >
-        {/* Sticky note top strip */}
+        {/* Header */}
         <div style={{
           background: '#F9E84B',
           borderRadius: '4px 4px 0 0',
@@ -74,30 +99,52 @@ function StickyNote({ student, onClose, onSave }) {
           >✕</button>
         </div>
 
-        {/* Ruled lines effect */}
-        <div style={{ padding: '12px 14px 14px', position: 'relative' }}>
-          <textarea
-            ref={textareaRef}
-            value={text}
-            onChange={e => setText(e.target.value)}
-            placeholder="Write notes about this student…"
-            rows={7}
+        {/* Toolbar */}
+        <div style={{
+          background: '#FFF59D',
+          borderBottom: '1px solid #e8d84a',
+          padding: '4px 10px',
+          display: 'flex',
+          gap: '4px',
+          flexWrap: 'wrap',
+          alignItems: 'center',
+        }}>
+          <button style={btnStyle()} title="Bold" onMouseDown={e => { e.preventDefault(); exec('bold'); }}><strong>B</strong></button>
+          <button style={{ ...btnStyle(), fontStyle: 'italic' }} title="Italic" onMouseDown={e => { e.preventDefault(); exec('italic'); }}><em>I</em></button>
+          <button style={{ ...btnStyle(), textDecoration: 'underline' }} title="Underline" onMouseDown={e => { e.preventDefault(); exec('underline'); }}>U</button>
+          <span style={{ color: '#c9b800', margin: '0 2px' }}>|</span>
+          <button style={btnStyle()} title="Bullet list" onMouseDown={e => { e.preventDefault(); exec('insertUnorderedList'); }}>• List</button>
+          <button style={btnStyle()} title="Numbered list" onMouseDown={e => { e.preventDefault(); exec('insertOrderedList'); }}>1. List</button>
+          <span style={{ color: '#c9b800', margin: '0 2px' }}>|</span>
+          <button style={btnStyle()} title="Highlight" onMouseDown={e => { e.preventDefault(); exec('hiliteColor', '#ffe066'); }}>Highlight</button>
+        </div>
+
+        {/* Editor */}
+        <div style={{ padding: '10px 14px 14px' }}>
+          <div
+            ref={editorRef}
+            contentEditable
+            suppressContentEditableWarning
+            data-placeholder="Write notes about this student…"
             style={{
-              width: '100%',
-              background: 'transparent',
-              border: 'none',
+              minHeight: '140px',
+              maxHeight: '260px',
+              overflowY: 'auto',
               outline: 'none',
-              resize: 'none',
-              fontFamily: 'inherit',
               fontSize: '0.92rem',
               color: '#3a3000',
               lineHeight: '1.7',
-              boxSizing: 'border-box',
-              backgroundImage: 'repeating-linear-gradient(transparent, transparent 27px, #e8d84a 27px, #e8d84a 28px)',
-              backgroundPositionY: '4px',
+              caretColor: '#3a3000',
             }}
           />
-          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '8px' }}>
+          <style>{`
+            [contenteditable]:empty:before {
+              content: attr(data-placeholder);
+              color: #b8a800;
+              pointer-events: none;
+            }
+          `}</style>
+          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '10px' }}>
             <button
               onClick={onClose}
               style={{
