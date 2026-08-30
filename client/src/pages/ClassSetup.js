@@ -152,7 +152,7 @@ function ClassSetup() {
   const loadStudents = async () => {
     try {
       const res = await axios.get(`${API}/classes/${classId}/students`, { headers });
-      setStudents(res.data);
+      setStudents([...res.data].sort((a, b) => (a.lastName || '').localeCompare(b.lastName || '')));
     } catch { setError('Failed to load students'); }
   };
 
