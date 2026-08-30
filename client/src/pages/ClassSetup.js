@@ -146,11 +146,6 @@ function StickyNote({ student, onClose, onSave }) {
             onMouseDown={e => { e.preventDefault(); exec('insertUnorderedList'); }}>• List</button>
           <button style={btnStyle()} title="Numbered list"
             onMouseDown={e => { e.preventDefault(); exec('insertOrderedList'); }}>1. List</button>
-          <span style={{ color: '#c9b800', padding: '0 4px' }}>|</span>
-          <button style={{ ...btnStyle(), background: '#ffe066', border: '1px solid #e8d84a' }} title="Highlight"
-            onMouseDown={e => { e.preventDefault(); exec('hiliteColor', '#ffe066'); }}>HL</button>
-          <button style={btnStyle()} title="Remove highlight"
-            onMouseDown={e => { e.preventDefault(); exec('hiliteColor', 'transparent'); }}>✕HL</button>
         </div>
 
         {/* Editor */}
