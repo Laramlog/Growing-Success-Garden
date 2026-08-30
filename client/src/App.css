@@ -425,7 +425,7 @@ table tbody tr:last-child td { border-bottom: none; }
 
 .checkbox-chip input[type="checkbox"] {
   width: auto;
-  margin: 0;
+  margin: 0 0.35rem 0 0;
   padding: 0;
 }
 

@@ -3,7 +3,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import axios from 'axios';
 import PasswordInput from '../components/PasswordInput';
 
-const API_URL = process.env.REACT_APP_API_URL || '${API_URL}';
+const API_URL = process.env.REACT_APP_API_URL || 'http://localhost:5000/api';
 
 const Flower = () => (
   <img src="/logo.png" alt="Growing Success Garden" style={{ width: '90px', height: '90px', objectFit: 'contain' }} />
@@ -25,7 +25,7 @@ function ForgotPassword() {
     setError('');
     setLoading(true);
     try {
-      const res = await axios.post('${API_URL}/auth/forgot-password', { email });
+      const res = await axios.post(`${API_URL}/auth/forgot-password`, { email });
       setUserName(res.data.name || '');
       setStep(2);
     } catch (err) {
@@ -42,7 +42,7 @@ function ForgotPassword() {
     setError('');
     setLoading(true);
     try {
-      await axios.post('${API_URL}/auth/forgot-password', { email, newPassword: password });
+      await axios.post(`${API_URL}/auth/forgot-password`, { email, newPassword: password });
       setDone(true);
       setTimeout(() => navigate('/login'), 2500);
     } catch (err) {

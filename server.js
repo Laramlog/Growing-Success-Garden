@@ -73,8 +73,10 @@ async function initializeDatabase() {
     "lastName" TEXT,
     pronouns TEXT,
     "classNotes" TEXT,
+    grade TEXT,
     "createdAt" TIMESTAMPTZ DEFAULT NOW()
   )`);
+  await pool.query(`ALTER TABLE students ADD COLUMN IF NOT EXISTS grade TEXT`);
 
   await pool.query(`CREATE TABLE IF NOT EXISTS assignments (
     id SERIAL PRIMARY KEY,
@@ -378,15 +380,15 @@ app.post('/api/classes/:classId/students/import', verifyToken, upload.single('fi
 
 app.post('/api/classes/:classId/students', verifyToken, async (req, res) => {
   try {
-    const { firstName, lastName, pronouns } = req.body;
+    const { firstName, lastName, pronouns, grade } = req.body;
     const classId = req.params.classId;
     const classData = await dbGet('SELECT * FROM classes WHERE id = ? AND "userId" = ?', [classId, req.userId]);
     if (!classData) return res.status(403).json({ error: 'Unauthorized' });
     const result = await dbRun(
-      'INSERT INTO students ("classId", "firstName", "lastName", pronouns) VALUES (?, ?, ?, ?) RETURNING id',
-      [classId, firstName, lastName || '', pronouns || '']
+      'INSERT INTO students ("classId", "firstName", "lastName", pronouns, grade) VALUES (?, ?, ?, ?, ?) RETURNING id',
+      [classId, firstName, lastName || '', pronouns || '', grade || '']
     );
-    res.json({ id: result.id, firstName, lastName: lastName || '', pronouns: pronouns || '' });
+    res.json({ id: result.id, firstName, lastName: lastName || '', pronouns: pronouns || '', grade: grade || '' });
   } catch (error) {
     res.status(400).json({ error: error.message });
   }
@@ -1105,7 +1107,8 @@ const CURRICULUM = {
       'Social Studies',
       'History',
       'Geography',
-      'Health and Physical Education',
+      'Health',
+      'Physical Education',
       'Visual Arts',
       'Music',
       'Drama',
@@ -1166,7 +1169,8 @@ const CURRICULUM = {
       'Drama',
       'Dance',
       'Media Arts',
-      'Health and Physical Education',
+      'Health',
+      'Physical Education',
       'Cooperative Education',
       'Guidance and Career Education',
       'Indigenous Studies',

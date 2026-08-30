@@ -134,7 +134,7 @@ function ClassSetup() {
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
   const [showAddStudent, setShowAddStudent] = useState(false);
-  const [newStudent, setNewStudent] = useState({ firstName: '', lastName: '', pronouns: '' });
+  const [newStudent, setNewStudent] = useState({ firstName: '', lastName: '', pronouns: '', grade: '' });
   const [noteStudent, setNoteStudent] = useState(null);
 
   useEffect(() => {
@@ -183,7 +183,7 @@ function ClassSetup() {
     e.preventDefault();
     try {
       await axios.post(`${API}/classes/${classId}/students`, newStudent, { headers });
-      setNewStudent({ firstName: '', lastName: '', pronouns: '' });
+      setNewStudent({ firstName: '', lastName: '', pronouns: '', grade: '' });
       setShowAddStudent(false);
       await loadStudents();
       setSuccess('Student added!');
@@ -292,6 +292,18 @@ function ClassSetup() {
                 <option value="he/they">he/they</option>
               </select>
             </div>
+            {classData?.grades?.length > 1 && (
+              <div className="form-group">
+                <label>Grade</label>
+                <select
+                  value={newStudent.grade}
+                  onChange={e => setNewStudent({ ...newStudent, grade: e.target.value })}
+                >
+                  <option value="">Not specified</option>
+                  {classData.grades.map(g => <option key={g} value={g}>{g}</option>)}
+                </select>
+              </div>
+            )}
             <button type="submit" className="btn-success">Add Student</button>
           </form>
         </div>
@@ -308,6 +320,7 @@ function ClassSetup() {
                 <th>First Name</th>
                 <th>Last Name</th>
                 <th>Pronouns</th>
+                {classData?.grades?.length > 1 && <th>Grade</th>}
                 <th style={{ textAlign: 'center' }}>Notes</th>
                 <th>Action</th>
               </tr>
@@ -319,6 +332,7 @@ function ClassSetup() {
                   <td>{student.firstName}</td>
                   <td>{student.lastName || '—'}</td>
                   <td>{student.pronouns || '—'}</td>
+                  {classData?.grades?.length > 1 && <td>{student.grade || '—'}</td>}
                   <td style={{ textAlign: 'center' }}>
                     <button
                       title={student.classNotes ? 'View/edit notes' : 'Add notes'}

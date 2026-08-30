@@ -274,7 +274,7 @@ function ReportCardWriter() {
       const subs = Array.isArray(cls.subjects) ? cls.subjects : [];
       setSubjects(subs);
       setActiveTab(subs.length > 0 ? subs[0] : 'learning-skills');
-      setStudents(studentsRes.data);
+      setStudents([...studentsRes.data].sort((a, b) => (a.lastName || '').localeCompare(b.lastName || '')));
       if (studentsRes.data.length > 0) setSelectedStudentId(studentsRes.data[0].id);
     } catch { setError('Failed to load class data'); }
   };

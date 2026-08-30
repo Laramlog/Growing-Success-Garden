@@ -331,7 +331,7 @@ function Dashboard() {
                     window.scrollTo({ top: 0, behavior: 'smooth' });
                   }}
                 >
-                  ✏️ Edit
+                  Edit
                 </button>
                 <button
                   className="btn-danger"

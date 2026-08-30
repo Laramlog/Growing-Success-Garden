@@ -57,11 +57,11 @@ function Gradebook() {
         setSelectedSubject(subs[0]);
         // reload with first subject
         const gb2 = await axios.get(`${API}/classes/${classId}/gradebook`, { headers, params: { subject: subs[0] } });
-        setStudents(gb2.data.students);
+        setStudents([...gb2.data.students].sort((a, b) => (a.lastName || '').localeCompare(b.lastName || '')));
         setAssignments(gb2.data.assignments);
         setGradeMatrix(gb2.data.gradeMatrix);
       } else {
-        setStudents(gbRes.data.students);
+        setStudents([...gbRes.data.students].sort((a, b) => (a.lastName || '').localeCompare(b.lastName || '')));
         setAssignments(gbRes.data.assignments);
         setGradeMatrix(gbRes.data.gradeMatrix);
       }
@@ -77,7 +77,7 @@ function Gradebook() {
     setShowAddAssignment(false);
     try {
       const gb = await axios.get(`${API}/classes/${classId}/gradebook`, { headers, params: { subject } });
-      setStudents(gb.data.students);
+      setStudents([...gb.data.students].sort((a, b) => (a.lastName || '').localeCompare(b.lastName || '')));
       setAssignments(gb.data.assignments);
       setGradeMatrix(gb.data.gradeMatrix);
     } catch { setError('Failed to load gradebook'); }
