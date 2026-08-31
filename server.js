@@ -915,7 +915,8 @@ app.post('/api/comments/:commentId/refine', verifyToken, async (req, res) => {
   try {
     const { feedback, currentContent } = req.body;
     const settings = await dbGet('SELECT "geminiApiKey" FROM settings WHERE "userId" = ?', [req.userId]);
-    if (!settings?.geminiApiKey) return res.status(400).json({ error: 'Gemini API key not configured in Settings' });
+    const apiKey = settings?.geminiApiKey || settings?.geminiApikey;
+    if (!apiKey) return res.status(400).json({ error: 'Gemini API key not configured in Settings' });
 
     const comment = await dbGet('SELECT * FROM comments WHERE id = ?', [req.params.commentId]);
     if (!comment) return res.status(404).json({ error: 'Comment not found' });
