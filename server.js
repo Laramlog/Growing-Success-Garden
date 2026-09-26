@@ -419,6 +419,19 @@ app.get('/api/classes/:classId/students', verifyToken, async (req, res) => {
   }
 });
 
+app.put('/api/students/:studentId', verifyToken, async (req, res) => {
+  try {
+    const { firstName, lastName, pronouns, grade } = req.body;
+    await dbRun(
+      'UPDATE students SET "firstName" = ?, "lastName" = ?, pronouns = ?, grade = ? WHERE id = ?',
+      [firstName, lastName || '', pronouns || '', grade || '', req.params.studentId]
+    );
+    res.json({ id: parseInt(req.params.studentId), firstName, lastName: lastName || '', pronouns: pronouns || '', grade: grade || '' });
+  } catch (error) {
+    res.status(400).json({ error: error.message });
+  }
+});
+
 app.delete('/api/students/:studentId', verifyToken, async (req, res) => {
   try {
     await dbRun('DELETE FROM students WHERE id = ?', [req.params.studentId]);
@@ -450,6 +463,19 @@ app.get('/api/classes/:classId/assignments', verifyToken, async (req, res) => {
       ? await dbAll('SELECT * FROM assignments WHERE "classId" = ? AND subject = ? ORDER BY "createdAt"', [req.params.classId, subject])
       : await dbAll('SELECT * FROM assignments WHERE "classId" = ? ORDER BY "createdAt"', [req.params.classId]);
     res.json(assignments);
+  } catch (error) {
+    res.status(400).json({ error: error.message });
+  }
+});
+
+app.put('/api/assignments/:assignmentId', verifyToken, async (req, res) => {
+  try {
+    const { name, maxGrade, weight, category } = req.body;
+    await dbRun(
+      'UPDATE assignments SET name = ?, "maxGrade" = ?, weight = ?, category = ? WHERE id = ?',
+      [name, maxGrade || 100, weight || 1, category || '', req.params.assignmentId]
+    );
+    res.json({ id: parseInt(req.params.assignmentId), name, maxGrade: maxGrade || 100, weight: weight || 1, category: category || '' });
   } catch (error) {
     res.status(400).json({ error: error.message });
   }

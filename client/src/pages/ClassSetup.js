@@ -219,6 +219,8 @@ function ClassSetup() {
   const [showAddStudent, setShowAddStudent] = useState(false);
   const [newStudent, setNewStudent] = useState({ firstName: '', lastName: '', pronouns: '', grade: '' });
   const [noteStudent, setNoteStudent] = useState(null);
+  const [editStudent, setEditStudent] = useState(null);
+  const [editForm, setEditForm] = useState({});
 
   useEffect(() => {
     loadClassData();
@@ -287,6 +289,19 @@ function ClassSetup() {
     await axios.put(`${API}/students/${studentId}/class-notes`, { classNotes }, { headers });
     setStudents(prev => prev.map(s => s.id === studentId ? { ...s, classNotes } : s));
     if (noteStudent?.id === studentId) setNoteStudent(prev => ({ ...prev, classNotes }));
+  };
+
+  const handleEditStudent = (student) => {
+    setEditStudent(student.id);
+    setEditForm({ firstName: student.firstName, lastName: student.lastName || '', pronouns: student.pronouns || '', grade: student.grade || '' });
+  };
+
+  const handleSaveEdit = async (studentId) => {
+    try {
+      await axios.put(`${API}/students/${studentId}`, editForm, { headers });
+      setStudents(prev => [...prev.map(s => s.id === studentId ? { ...s, ...editForm } : s)].sort((a, b) => (a.lastName || '').localeCompare(b.lastName || '')));
+      setEditStudent(null);
+    } catch { setError('Failed to update student'); }
   };
 
   const gradesDisplay = Array.isArray(classData?.grades) ? classData.grades.join(' / ') : classData?.grades;
@@ -412,43 +427,58 @@ function ClassSetup() {
               {students.map((student, i) => (
                 <tr key={student.id}>
                   <td>{i + 1}</td>
-                  <td>{student.firstName}</td>
-                  <td>{student.lastName || '—'}</td>
-                  <td>{student.pronouns || '—'}</td>
-                  {classData?.grades?.length > 1 && <td>{student.grade || '—'}</td>}
-                  <td style={{ textAlign: 'center' }}>
-                    <button
-                      title={student.classNotes ? 'View/edit notes' : 'Add notes'}
-                      onClick={() => setNoteStudent(student)}
-                      style={{
-                        background: 'none',
-                        border: 'none',
-                        cursor: 'pointer',
-                        color: student.classNotes ? '#97B3AE' : '#bbb',
-                        padding: '4px',
-                        borderRadius: '4px',
-                        display: 'inline-flex',
-                        alignItems: 'center',
-                        transition: 'color 0.15s',
-                      }}
-                      onMouseEnter={e => e.currentTarget.style.color = '#5a9e97'}
-                      onMouseLeave={e => e.currentTarget.style.color = student.classNotes ? '#97B3AE' : '#bbb'}
-                    >
-                      <NotepadIcon />
-                      {student.classNotes && (
-                        <span style={{ width: 7, height: 7, borderRadius: '50%', background: '#F2C3B9', marginLeft: 3, display: 'inline-block' }} />
+                  {editStudent === student.id ? (
+                    <>
+                      <td><input value={editForm.firstName} onChange={e => setEditForm(f => ({ ...f, firstName: e.target.value }))} style={{ width: '90px', padding: '2px 4px', fontSize: '0.88rem' }} /></td>
+                      <td><input value={editForm.lastName} onChange={e => setEditForm(f => ({ ...f, lastName: e.target.value }))} style={{ width: '90px', padding: '2px 4px', fontSize: '0.88rem' }} /></td>
+                      <td>
+                        <select value={editForm.pronouns} onChange={e => setEditForm(f => ({ ...f, pronouns: e.target.value }))} style={{ fontSize: '0.85rem', padding: '2px 4px' }}>
+                          <option value="">Not specified</option>
+                          <option value="she/her">she/her</option>
+                          <option value="he/him">he/him</option>
+                          <option value="they/them">they/them</option>
+                          <option value="she/they">she/they</option>
+                          <option value="he/they">he/they</option>
+                        </select>
+                      </td>
+                      {classData?.grades?.length > 1 && (
+                        <td>
+                          <select value={editForm.grade} onChange={e => setEditForm(f => ({ ...f, grade: e.target.value }))} style={{ fontSize: '0.85rem', padding: '2px 4px' }}>
+                            <option value="">—</option>
+                            {classData.grades.map(g => <option key={g} value={g}>{g}</option>)}
+                          </select>
+                        </td>
                       )}
-                    </button>
-                  </td>
-                  <td>
-                    <button
-                      className="btn-danger"
-                      style={{ padding: '0.3rem 0.7rem', fontSize: '0.85rem' }}
-                      onClick={() => handleDeleteStudent(student.id)}
-                    >
-                      Remove
-                    </button>
-                  </td>
+                      <td style={{ textAlign: 'center' }}>—</td>
+                      <td style={{ whiteSpace: 'nowrap' }}>
+                        <button className="btn-success" style={{ padding: '0.2rem 0.6rem', fontSize: '0.82rem', marginRight: '4px' }} onClick={() => handleSaveEdit(student.id)}>Save</button>
+                        <button className="btn-secondary" style={{ padding: '0.2rem 0.6rem', fontSize: '0.82rem' }} onClick={() => setEditStudent(null)}>Cancel</button>
+                      </td>
+                    </>
+                  ) : (
+                    <>
+                      <td>{student.firstName}</td>
+                      <td>{student.lastName || '—'}</td>
+                      <td>{student.pronouns || '—'}</td>
+                      {classData?.grades?.length > 1 && <td>{student.grade || '—'}</td>}
+                      <td style={{ textAlign: 'center' }}>
+                        <button
+                          title={student.classNotes ? 'View/edit notes' : 'Add notes'}
+                          onClick={() => setNoteStudent(student)}
+                          style={{ background: 'none', border: 'none', cursor: 'pointer', color: student.classNotes ? '#97B3AE' : '#bbb', padding: '4px', borderRadius: '4px', display: 'inline-flex', alignItems: 'center', transition: 'color 0.15s' }}
+                          onMouseEnter={e => e.currentTarget.style.color = '#5a9e97'}
+                          onMouseLeave={e => e.currentTarget.style.color = student.classNotes ? '#97B3AE' : '#bbb'}
+                        >
+                          <NotepadIcon />
+                          {student.classNotes && <span style={{ width: 7, height: 7, borderRadius: '50%', background: '#F2C3B9', marginLeft: 3, display: 'inline-block' }} />}
+                        </button>
+                      </td>
+                      <td style={{ whiteSpace: 'nowrap' }}>
+                        <button className="btn-secondary" style={{ padding: '0.3rem 0.7rem', fontSize: '0.85rem', marginRight: '4px' }} onClick={() => handleEditStudent(student)}>Edit</button>
+                        <button className="btn-danger" style={{ padding: '0.3rem 0.7rem', fontSize: '0.85rem' }} onClick={() => handleDeleteStudent(student.id)}>Remove</button>
+                      </td>
+                    </>
+                  )}
                 </tr>
               ))}
             </tbody>

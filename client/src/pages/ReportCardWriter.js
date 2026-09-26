@@ -608,7 +608,7 @@ function ReportCardWriter() {
           <div className="form-group" style={{ flex: '1', minWidth: '200px', marginBottom: 0 }}>
             <label><strong>Student</strong></label>
             <select value={selectedStudentId || ''} onChange={e => setSelectedStudentId(parseInt(e.target.value))}>
-              {students.map(s => <option key={s.id} value={s.id}>{s.lastName}, {s.firstName}</option>)}
+              {students.map(s => <option key={s.id} value={s.id}>{s.lastName ? `${s.lastName}, ${s.firstName}` : s.firstName}</option>)}
             </select>
           </div>
           {currentStudent && (

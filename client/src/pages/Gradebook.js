@@ -42,6 +42,8 @@ function Gradebook() {
   const [showAddAssignment, setShowAddAssignment] = useState(false);
   const [newAssignment, setNewAssignment] = useState({ name: '', maxGrade: 100, weight: 1, category: '' });
   const [saving, setSaving] = useState({});
+  const [editAssignment, setEditAssignment] = useState(null);
+  const [editAssignmentForm, setEditAssignmentForm] = useState({});
 
   const loadGradebook = useCallback(async (subject) => {
     try {
@@ -135,6 +137,14 @@ function Gradebook() {
     } catch (err) {
       setError('Failed to add assignment');
     }
+  };
+
+  const handleSaveAssignment = async () => {
+    try {
+      await axios.put(`${API}/assignments/${editAssignment}`, editAssignmentForm, { headers });
+      setAssignments(prev => prev.map(a => a.id === editAssignment ? { ...a, ...editAssignmentForm } : a));
+      setEditAssignment(null);
+    } catch { setError('Failed to update assignment'); }
   };
 
   const handleDeleteAssignment = async (assignmentId) => {
@@ -263,16 +273,40 @@ function Gradebook() {
                 <th className="student-col sticky-col">Student</th>
                 {assignments.map(a => (
                   <th key={a.id} className="assignment-col">
-                    <div className="assignment-header">
-                      <span title={a.name}>{a.name}</span>
-                      <span className="assignment-meta">/{a.maxGrade}{a.weight !== 1 ? ` ×${a.weight}` : ''}</span>
-                      {a.category && <span className="assignment-category">{a.category}</span>}
-                      <button
-                        className="delete-assignment-btn"
-                        onClick={() => handleDeleteAssignment(a.id)}
-                        title="Delete assignment"
-                      >×</button>
-                    </div>
+                    {editAssignment === a.id ? (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '3px', minWidth: '140px' }}>
+                        <input value={editAssignmentForm.name} onChange={e => setEditAssignmentForm(f => ({ ...f, name: e.target.value }))} style={{ fontSize: '0.8rem', padding: '2px 4px', width: '100%' }} placeholder="Name" />
+                        <div style={{ display: 'flex', gap: '3px' }}>
+                          <input value={editAssignmentForm.maxGrade} onChange={e => setEditAssignmentForm(f => ({ ...f, maxGrade: parseFloat(e.target.value) }))} type="number" style={{ fontSize: '0.8rem', padding: '2px 4px', width: '55px' }} placeholder="Max" />
+                          <input value={editAssignmentForm.weight} onChange={e => setEditAssignmentForm(f => ({ ...f, weight: parseFloat(e.target.value) }))} type="number" step="0.1" style={{ fontSize: '0.8rem', padding: '2px 4px', width: '45px' }} placeholder="Wt" />
+                        </div>
+                        <input value={editAssignmentForm.category} onChange={e => setEditAssignmentForm(f => ({ ...f, category: e.target.value }))} style={{ fontSize: '0.8rem', padding: '2px 4px', width: '100%' }} placeholder="Category" />
+                        <div style={{ display: 'flex', gap: '3px' }}>
+                          <button onClick={handleSaveAssignment} style={{ fontSize: '0.75rem', padding: '2px 6px', background: '#97B3AE', color: 'white', border: 'none', borderRadius: '3px', cursor: 'pointer' }}>Save</button>
+                          <button onClick={() => setEditAssignment(null)} style={{ fontSize: '0.75rem', padding: '2px 6px', background: '#ddd', border: 'none', borderRadius: '3px', cursor: 'pointer' }}>Cancel</button>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="assignment-header">
+                        <span title={a.name}>{a.name}</span>
+                        <span className="assignment-meta">/{a.maxGrade}{a.weight !== 1 ? ` ×${a.weight}` : ''}</span>
+                        {a.category && <span className="assignment-category">{a.category}</span>}
+                        <button
+                          style={{ background: 'rgba(255,255,255,0.25)', border: '1px solid rgba(255,255,255,0.6)', cursor: 'pointer', padding: '2px 7px', borderRadius: '10px', fontSize: '0.68rem', color: 'white', fontWeight: 600, letterSpacing: '0.03em', display: 'flex', alignItems: 'center', gap: '3px', lineHeight: 1.4 }}
+                          onClick={() => { setEditAssignment(a.id); setEditAssignmentForm({ name: a.name, maxGrade: a.maxGrade, weight: a.weight, category: a.category || '' }); }}
+                          title="Edit assignment"
+                          onMouseEnter={e => { e.currentTarget.style.background = 'rgba(255,255,255,0.45)'; }}
+                          onMouseLeave={e => { e.currentTarget.style.background = 'rgba(255,255,255,0.25)'; }}
+                        >
+                          ✏ Edit
+                        </button>
+                        <button
+                          className="delete-assignment-btn"
+                          onClick={() => handleDeleteAssignment(a.id)}
+                          title="Delete assignment"
+                        >×</button>
+                      </div>
+                    )}
                   </th>
                 ))}
                 {assignments.length > 0 && (
@@ -291,7 +325,7 @@ function Gradebook() {
                 return (
                   <tr key={student.id}>
                     <td className="student-col sticky-col">
-                      <strong>{student.lastName}</strong>, {student.firstName}
+                      {student.lastName ? <><strong>{student.lastName}</strong>, {student.firstName}</> : <strong>{student.firstName}</strong>}
                       {student.pronouns && <span className="text-muted" style={{ fontSize: '0.75rem', marginLeft: '0.3rem' }}>({student.pronouns})</span>}
                       {overall !== null && overall < 60 && (
                         <div style={{ marginTop: '0.25rem', fontSize: '0.72rem', color: '#c0392b', fontWeight: 700, background: '#fdecea', borderRadius: '4px', padding: '0.1rem 0.4rem', display: 'inline-block' }}>

@@ -540,6 +540,7 @@ table tbody tr:last-child td { border-bottom: none; }
   padding: 0.5rem 0.75rem;
   text-align: center;
   font-size: 0.9rem;
+  color: #3d3530 !important;
 }
 
 .grade-cell { padding: 0 !important; }
