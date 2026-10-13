@@ -8,6 +8,7 @@ const API_URL = process.env.REACT_APP_API_URL || 'http://localhost:5000/api';
 function Settings() {
   const [settings, setSettings] = useState({
     geminiApiKey: '',
+    anthropicApiKey: '',
     gradeFormat: 'percentage',
     theme: 'light',
     emailUser: '',
@@ -65,14 +66,14 @@ function Settings() {
       {success && <div className="alert alert-success">{success}</div>}
 
       <div className="card">
-        <h2>Gemini API Configuration</h2>
+        <h2>AI Configuration</h2>
         <p className="text-muted">
-          Your Gemini API key is stored securely and used only for comment generation.
+          Add at least one API key. If Gemini is unavailable, the app will automatically fall back to Anthropic (Claude).
         </p>
 
         <form onSubmit={handleSaveSettings}>
           <div className="form-group">
-            <label>Gemini API Key</label>
+            <label>Gemini API Key <span className="text-muted" style={{fontWeight:'normal'}}>(free)</span></label>
             <input
               type="password"
               value={settings.geminiApiKey}
@@ -82,10 +83,29 @@ function Settings() {
               placeholder="Enter your Gemini API key"
             />
             <p className="text-muted mt-1">
-              Get your free API key at{' '}
+              Get your free key at{' '}
               <a href="https://aistudio.google.com" target="_blank" rel="noopener noreferrer">
                 Google AI Studio
               </a>
+            </p>
+          </div>
+
+          <div className="form-group">
+            <label>Anthropic API Key <span className="text-muted" style={{fontWeight:'normal'}}>(Claude — backup / primary)</span></label>
+            <input
+              type="password"
+              value={settings.anthropicApiKey}
+              onChange={(e) =>
+                setSettings({ ...settings, anthropicApiKey: e.target.value })
+              }
+              placeholder="sk-ant-..."
+            />
+            <p className="text-muted mt-1">
+              Get a key at{' '}
+              <a href="https://console.anthropic.com" target="_blank" rel="noopener noreferrer">
+                console.anthropic.com
+              </a>
+              {' '}— very cheap (~$0.05 per full class run)
             </p>
           </div>
 

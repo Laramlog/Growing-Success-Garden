@@ -10,6 +10,7 @@ import fs from 'fs';
 import crypto from 'crypto';
 import nodemailer from 'nodemailer';
 import { GoogleGenerativeAI } from '@google/generative-ai';
+import Anthropic from '@anthropic-ai/sdk';
 
 const app = express();
 const upload = multer({ dest: 'uploads/' });
@@ -136,6 +137,8 @@ async function initializeDatabase() {
     "emailUser" TEXT,
     "emailPass" TEXT
   )`);
+
+  await pool.query(`ALTER TABLE settings ADD COLUMN IF NOT EXISTS "anthropicApiKey" TEXT`);
 
   await pool.query(`CREATE TABLE IF NOT EXISTS "passwordResets" (
     id SERIAL PRIMARY KEY,
@@ -607,10 +610,11 @@ app.post('/api/classes/:classId/generate-comment', verifyToken, async (req, res)
     const { studentId, overallGrade, classContext, strengths, struggles, commentType, quickObservations, customContext, subject, targetWordCount, term, previousTermComments } = req.body;
     const classId = req.params.classId;
 
-    const settings = await dbGet('SELECT "geminiApiKey" FROM settings WHERE "userId" = ?', [req.userId]);
-    const apiKey = settings?.geminiApiKey || settings?.geminiApikey;
-    if (!apiKey) {
-      return res.status(400).json({ error: 'Gemini API key not configured in Settings' });
+    const settings = await dbGet('SELECT "geminiApiKey", "anthropicApiKey" FROM settings WHERE "userId" = ?', [req.userId]);
+    const geminiKey = settings?.geminiApiKey || settings?.geminiApikey;
+    const anthropicKey = settings?.anthropicApiKey;
+    if (!geminiKey && !anthropicKey) {
+      return res.status(400).json({ error: 'No AI API key configured. Please add a Gemini or Anthropic API key in Settings.' });
     }
 
     const student = await dbGet('SELECT * FROM students WHERE id = ?', [studentId]);
@@ -713,10 +717,7 @@ Writing rules:
 Write only the comment text.`;
     }
 
-    const genAI = new GoogleGenerativeAI(apiKey);
-    const model = genAI.getGenerativeModel({ model: 'gemini-3.6-flash' });
-    const result = await model.generateContent(prompt);
-    const commentText = result.response.text();
+    const commentText = await generateWithAI(prompt, geminiKey, anthropicKey);
 
     const commentResult = await dbRun(
       'INSERT INTO comments ("studentId", "classId", subject, "commentType", content, draft, term) VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING id',
@@ -729,6 +730,31 @@ Write only the comment text.`;
     res.status(400).json({ error: error.message });
   }
 });
+
+async function generateWithAI(prompt, geminiApiKey, anthropicApiKey) {
+  // Try Gemini first if key exists, fallback to Anthropic on error
+  if (geminiApiKey) {
+    try {
+      const genAI = new GoogleGenerativeAI(geminiApiKey);
+      const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
+      const result = await model.generateContent(prompt);
+      return result.response.text();
+    } catch (err) {
+      console.error('Gemini failed, trying Anthropic fallback:', err.message);
+      if (!anthropicApiKey) throw err;
+    }
+  }
+  if (anthropicApiKey) {
+    const client = new Anthropic({ apiKey: anthropicApiKey });
+    const msg = await client.messages.create({
+      model: 'claude-haiku-4-5-20251001',
+      max_tokens: 1024,
+      messages: [{ role: 'user', content: prompt }],
+    });
+    return msg.content[0].text;
+  }
+  throw new Error('No AI API key configured. Please add a Gemini or Anthropic API key in Settings.');
+}
 
 function parsePronoun(pronounString) {
   if (!pronounString) return { subject: 'they', object: 'them', possessive: 'their' };
@@ -940,9 +966,10 @@ app.post('/api/comments/bulk-delete', verifyToken, async (req, res) => {
 app.post('/api/comments/:commentId/refine', verifyToken, async (req, res) => {
   try {
     const { feedback, currentContent } = req.body;
-    const settings = await dbGet('SELECT "geminiApiKey" FROM settings WHERE "userId" = ?', [req.userId]);
-    const apiKey = settings?.geminiApiKey || settings?.geminiApikey;
-    if (!apiKey) return res.status(400).json({ error: 'Gemini API key not configured in Settings' });
+    const settings = await dbGet('SELECT "geminiApiKey", "anthropicApiKey" FROM settings WHERE "userId" = ?', [req.userId]);
+    const geminiKey = settings?.geminiApiKey || settings?.geminiApikey;
+    const anthropicKey = settings?.anthropicApiKey;
+    if (!geminiKey && !anthropicKey) return res.status(400).json({ error: 'No AI API key configured. Please add a Gemini or Anthropic API key in Settings.' });
 
     const comment = await dbGet('SELECT * FROM comments WHERE id = ?', [req.params.commentId]);
     if (!comment) return res.status(404).json({ error: 'Comment not found' });
@@ -970,10 +997,7 @@ Instructions:
 - Maintain Ontario report card tone and language
 - Output only the revised comment text, nothing else`;
 
-    const genAI = new GoogleGenerativeAI(apiKey);
-    const model = genAI.getGenerativeModel({ model: 'gemini-3.6-flash' });
-    const result = await model.generateContent(prompt);
-    const refined = result.response.text();
+    const refined = await generateWithAI(prompt, geminiKey, anthropicKey);
 
     // Update comment in DB
     await dbRun('UPDATE comments SET content = ?, "updatedAt" = NOW() WHERE id = ?', [refined, req.params.commentId]);
@@ -1099,10 +1123,10 @@ app.get('/api/classes/:classId/students/:studentId/learning-skills', verifyToken
 
 app.put('/api/settings', verifyToken, async (req, res) => {
   try {
-    const { geminiApiKey, gradeFormat, theme, emailUser, emailPass } = req.body;
+    const { geminiApiKey, anthropicApiKey, gradeFormat, theme, emailUser, emailPass } = req.body;
     await dbRun(
-      'UPDATE settings SET "geminiApiKey" = ?, "gradeFormat" = ?, theme = ?, "emailUser" = ?, "emailPass" = ? WHERE "userId" = ?',
-      [geminiApiKey, gradeFormat, theme, emailUser || null, emailPass || null, req.userId]
+      'UPDATE settings SET "geminiApiKey" = ?, "anthropicApiKey" = ?, "gradeFormat" = ?, theme = ?, "emailUser" = ?, "emailPass" = ? WHERE "userId" = ?',
+      [geminiApiKey, anthropicApiKey || null, gradeFormat, theme, emailUser || null, emailPass || null, req.userId]
     );
     res.json({ success: true });
   } catch (error) {
