@@ -97,21 +97,32 @@ function Gradebook() {
 
   const handleGradeBlur = async (studentId, assignmentId, value) => {
     const key = `${studentId}-${assignmentId}`;
-    if (value === '' || value == null) return;
     setSaving(prev => ({ ...prev, [key]: true }));
     try {
-      const res = await axios.put(
-        `${API}/classes/${classId}/grades/upsert`,
-        { studentId, assignmentId, grade: parseFloat(value) },
-        { headers }
-      );
-      setGradeMatrix(prev => ({
-        ...prev,
-        [studentId]: {
-          ...prev[studentId],
-          [assignmentId]: { id: res.data.id, grade: parseFloat(value) },
-        },
-      }));
+      if (value === '' || value == null) {
+        // Clear the grade — delete it if it exists
+        const existingId = gradeMatrix[studentId]?.[assignmentId]?.id;
+        if (existingId) {
+          await axios.delete(`${API}/grades/${existingId}`, { headers });
+          setGradeMatrix(prev => ({
+            ...prev,
+            [studentId]: { ...prev[studentId], [assignmentId]: { grade: '' } },
+          }));
+        }
+      } else {
+        const res = await axios.put(
+          `${API}/classes/${classId}/grades/upsert`,
+          { studentId, assignmentId, grade: parseFloat(value) },
+          { headers }
+        );
+        setGradeMatrix(prev => ({
+          ...prev,
+          [studentId]: {
+            ...prev[studentId],
+            [assignmentId]: { id: res.data.id, grade: parseFloat(value) },
+          },
+        }));
+      }
     } catch (err) {
       setError('Failed to save grade');
     } finally {
