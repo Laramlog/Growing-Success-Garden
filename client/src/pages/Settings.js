@@ -17,6 +17,7 @@ function Settings() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
+
   const navigate = useNavigate();
 
   const token = localStorage.getItem('token');

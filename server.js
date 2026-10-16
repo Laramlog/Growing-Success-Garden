@@ -140,6 +140,18 @@ async function initializeDatabase() {
 
   await pool.query(`ALTER TABLE settings ADD COLUMN IF NOT EXISTS "anthropicApiKey" TEXT`);
 
+  await pool.query(`CREATE TABLE IF NOT EXISTS app_config (
+    key TEXT PRIMARY KEY,
+    value TEXT
+  )`);
+
+  // Seed invite code from env var if not already in DB
+  const existingCode = await dbGet(`SELECT value FROM app_config WHERE key = 'inviteCode'`);
+  if (!existingCode) {
+    const initialCode = process.env.INVITE_CODE || crypto.randomBytes(4).toString('hex');
+    await dbRun(`INSERT INTO app_config (key, value) VALUES ('inviteCode', ?) ON CONFLICT (key) DO NOTHING`, [initialCode]);
+  }
+
   await pool.query(`CREATE TABLE IF NOT EXISTS "passwordResets" (
     id SERIAL PRIMARY KEY,
     "userId" INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -189,7 +201,9 @@ function verifyToken(req, res, next) {
 app.post('/api/auth/register', async (req, res) => {
   try {
     const { email, password, name, inviteCode } = req.body;
-    if (INVITE_CODE && inviteCode !== INVITE_CODE) {
+    const configRow = await dbGet(`SELECT value FROM app_config WHERE key = 'inviteCode'`);
+    const currentCode = configRow?.value || null;
+    if (currentCode && inviteCode !== currentCode) {
       return res.status(403).json({ error: 'Invalid invite code. Please contact the administrator.' });
     }
     const hashedPassword = await bcrypt.hash(password, 10);
@@ -198,6 +212,9 @@ app.post('/api/auth/register', async (req, res) => {
       [email, hashedPassword, name]
     );
     await dbRun('INSERT INTO settings ("userId") VALUES (?) RETURNING id', [result.id]);
+    // Rotate invite code after successful registration
+    const newCode = crypto.randomBytes(4).toString('hex');
+    await dbRun(`UPDATE app_config SET value = ? WHERE key = 'inviteCode'`, [newCode]);
     const token = jwt.sign({ id: result.id, email }, JWT_SECRET);
     res.json({ token, userId: result.id, name });
   } catch (error) {
@@ -1114,6 +1131,37 @@ app.get('/api/classes/:classId/students/:studentId/learning-skills', verifyToken
       [req.params.studentId, req.params.classId, term || 'Term 1']
     );
     res.json(skills || {});
+  } catch (error) {
+    res.status(400).json({ error: error.message });
+  }
+});
+
+// ===== INVITE CODE =====
+
+// Secret admin URL — only you know this path. Returns current invite code as plain text.
+// Visit: https://your-app.onrender.com/api/admin/invite-code?secret=YOUR_ADMIN_SECRET
+app.get('/api/admin/invite-code', async (req, res) => {
+  try {
+    const adminSecret = process.env.ADMIN_SECRET;
+    if (!adminSecret || req.query.secret !== adminSecret) {
+      return res.status(403).send('Forbidden');
+    }
+    const row = await dbGet(`SELECT value FROM app_config WHERE key = 'inviteCode'`);
+    res.send(`Current invite code: ${row?.value || 'none'}`);
+  } catch (error) {
+    res.status(400).json({ error: error.message });
+  }
+});
+
+app.post('/api/admin/invite-code/regenerate', async (req, res) => {
+  try {
+    const adminSecret = process.env.ADMIN_SECRET;
+    if (!adminSecret || req.query.secret !== adminSecret) {
+      return res.status(403).send('Forbidden');
+    }
+    const newCode = crypto.randomBytes(4).toString('hex');
+    await dbRun(`UPDATE app_config SET value = ? WHERE key = 'inviteCode'`, [newCode]);
+    res.send(`New invite code: ${newCode}`);
   } catch (error) {
     res.status(400).json({ error: error.message });
   }
