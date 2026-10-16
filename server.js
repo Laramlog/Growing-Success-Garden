@@ -202,7 +202,7 @@ app.post('/api/auth/register', async (req, res) => {
   try {
     const { email, password, name, inviteCode } = req.body;
     const configRow = await dbGet(`SELECT value FROM app_config WHERE key = 'inviteCode'`);
-    const currentCode = configRow?.value || null;
+    const currentCode = configRow?.value || process.env.INVITE_CODE || null;
     if (currentCode && inviteCode !== currentCode) {
       return res.status(403).json({ error: 'Invalid invite code. Please contact the administrator.' });
     }
