@@ -503,7 +503,7 @@ app.put('/api/assignments/:assignmentId', verifyToken, async (req, res) => {
 
 app.delete('/api/assignments/:assignmentId', verifyToken, async (req, res) => {
   try {
-    await dbRun('DELETE FROM grades WHERE assignmentId = ?', [req.params.assignmentId]);
+    await dbRun('DELETE FROM grades WHERE "assignmentId" = ?', [req.params.assignmentId]);
     await dbRun('DELETE FROM assignments WHERE id = ?', [req.params.assignmentId]);
     res.json({ success: true });
   } catch (error) {
