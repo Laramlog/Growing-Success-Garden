@@ -90,7 +90,8 @@ function Gradebook() {
       ...prev,
       [studentId]: {
         ...prev[studentId],
-        [assignmentId]: { ...prev[studentId]?.[assignmentId], grade: value },
+        // preserve existing id so we can delete later
+        [assignmentId]: { id: prev[studentId]?.[assignmentId]?.id, grade: value },
       },
     }));
   };
@@ -106,7 +107,7 @@ function Gradebook() {
           await axios.delete(`${API}/grades/${existingId}`, { headers });
           setGradeMatrix(prev => ({
             ...prev,
-            [studentId]: { ...prev[studentId], [assignmentId]: { grade: '' } },
+            [studentId]: { ...prev[studentId], [assignmentId]: { id: undefined, grade: '' } },
           }));
         }
       } else {
