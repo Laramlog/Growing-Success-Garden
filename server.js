@@ -657,22 +657,21 @@ app.post('/api/classes/:classId/generate-comment', verifyToken, async (req, res)
     const gradesDisplay = classInfo.grades ? classInfo.grades.join('/') : '';
     const subjectsDisplay = subject || (classInfo.subjects ? classInfo.subjects.join(', ') : '');
 
+    // Anonymize: AI sees [STUDENT] and generic pronouns, real name/pronouns inserted after
+    const anonSubject = 'they', anonObject = 'them', anonPossessive = 'their';
+
     let prompt;
     if (commentType === 'learning-skills') {
       prompt = `You are an Ontario teacher writing a Learning Skills and Work Habits comment for a student's report card.
 Target length: approximately ${wordTarget} words.
 Reporting period: ${term || 'Term 1'}
 
-Student first name: ${student.firstName}
-PRONOUNS — NON-NEGOTIABLE: ${student.firstName}'s pronouns are "${student.pronouns || 'they/them'}".
-Subject pronoun: "${pronounObj.subject}" — use this wherever you would write he/she/they
-Object pronoun: "${pronounObj.object}" — use this wherever you would write him/her/them
-Possessive pronoun: "${pronounObj.possessive}" — use this wherever you would write his/her/their
-NEVER substitute a different pronoun. If unsure, re-read: use ONLY "${pronounObj.subject}/${pronounObj.object}/${pronounObj.possessive}".
+Use "[STUDENT]" wherever you would write the student's name.
+Pronouns: subject="${anonSubject}", object="${anonObject}", possessive="${anonPossessive}" — use these throughout.
 ${customText ? `
 TEACHER NOTES — READ CAREFULLY BEFORE WRITING:
 ${customContext}
-These notes describe this student's ACTUAL behaviour. Every point must shape what you write. Do NOT write anything that contradicts these notes. Do NOT tack them on as an awkward final sentence — weave them naturally into the comment so it reads as one coherent paragraph.
+These notes describe this student's ACTUAL behaviour. Every point must shape what you write. Do NOT write anything that contradicts these notes. Weave them naturally into the comment.
 ` : ''}
 ${classContext ? `Class context: ${classContext}` : ''}
 ${observationText}
@@ -697,12 +696,8 @@ Write only the comment text.`;
 Target length: approximately ${wordTarget} words.
 Reporting period: ${term || 'Term 1'}
 
-Student first name: ${student.firstName}
-PRONOUNS — NON-NEGOTIABLE: ${student.firstName}'s pronouns are "${student.pronouns || 'they/them'}".
-Subject pronoun: "${pronounObj.subject}" — use this wherever you would write he/she/they
-Object pronoun: "${pronounObj.object}" — use this wherever you would write him/her/them
-Possessive pronoun: "${pronounObj.possessive}" — use this wherever you would write his/her/their
-NEVER substitute a different pronoun. If unsure, re-read: use ONLY "${pronounObj.subject}/${pronounObj.object}/${pronounObj.possessive}".
+Use "[STUDENT]" wherever you would write the student's name.
+Pronouns: subject="${anonSubject}", object="${anonObject}", possessive="${anonPossessive}" — use these throughout.
 
 Grade Level: ${gradesDisplay}
 Subject: ${subjectsDisplay}
@@ -711,7 +706,7 @@ School: ${classInfo.schoolType === 'elementary' ? 'Elementary (K-8)' : 'Secondar
 ${customText ? `
 TEACHER NOTES — READ CAREFULLY BEFORE WRITING:
 ${customContext}
-These notes describe this student's ACTUAL behaviour and performance. Every point must shape what you write. Do NOT write anything that contradicts these notes. Do NOT tack them on as an awkward final sentence — weave them naturally into the comment so it reads as one coherent paragraph.
+These notes describe this student's ACTUAL behaviour and performance. Every point must shape what you write. Do NOT write anything that contradicts these notes. Weave them naturally into the comment.
 ` : ''}
 What the class has been working on this term:
 ${classContext || 'Various curriculum expectations for this subject'}
@@ -734,7 +729,17 @@ Writing rules:
 Write only the comment text.`;
     }
 
-    const commentText = await generateWithAI(prompt, geminiKey, anthropicKey);
+    const rawComment = await generateWithAI(prompt, geminiKey, anthropicKey);
+
+    // Re-insert real name and pronouns
+    const commentText = rawComment
+      .replace(/\[STUDENT\]/g, student.firstName)
+      .replace(/\bthey\b/g, pronounObj.subject)
+      .replace(/\bthem\b/g, pronounObj.object)
+      .replace(/\btheir\b/g, pronounObj.possessive)
+      .replace(/\bThey\b/g, pronounObj.subject.charAt(0).toUpperCase() + pronounObj.subject.slice(1))
+      .replace(/\bThem\b/g, pronounObj.object.charAt(0).toUpperCase() + pronounObj.object.slice(1))
+      .replace(/\bTheir\b/g, pronounObj.possessive.charAt(0).toUpperCase() + pronounObj.possessive.slice(1));
 
     const commentResult = await dbRun(
       'INSERT INTO comments ("studentId", "classId", subject, "commentType", content, draft, term) VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING id',
@@ -994,16 +999,21 @@ app.post('/api/comments/:commentId/refine', verifyToken, async (req, res) => {
     const student = await dbGet('SELECT * FROM students WHERE id = ?', [comment.studentId || comment.studentid]);
     const pronounObj = parsePronoun(student?.pronouns);
 
+    // Anonymize current comment before sending to AI
+    const firstName = student?.firstName || '[STUDENT]';
+    const anonContent = (currentContent || comment.content)
+      .replace(new RegExp(firstName, 'g'), '[STUDENT]')
+      .replace(new RegExp(pronounObj.subject, 'gi'), 'they')
+      .replace(new RegExp(pronounObj.object, 'gi'), 'them')
+      .replace(new RegExp(pronounObj.possessive, 'gi'), 'their');
+
     const prompt = `You are revising an Ontario report card comment based on a teacher's feedback.
 
-PRONOUNS — NON-NEGOTIABLE: ${student?.firstName}'s pronouns are "${student?.pronouns || 'they/them'}".
-Subject pronoun: "${pronounObj.subject}" — use this wherever you would write he/she/they
-Object pronoun: "${pronounObj.object}" — use this wherever you would write him/her/them
-Possessive pronoun: "${pronounObj.possessive}" — use this wherever you would write his/her/their
-NEVER substitute a different pronoun. Use ONLY "${pronounObj.subject}/${pronounObj.object}/${pronounObj.possessive}".
+Use "[STUDENT]" wherever you would write the student's name.
+Pronouns: they/them/their throughout.
 
 Current comment:
-"${currentContent || comment.content}"
+"${anonContent}"
 
 Teacher's feedback / requested changes:
 "${feedback}"
@@ -1014,7 +1024,17 @@ Instructions:
 - Maintain Ontario report card tone and language
 - Output only the revised comment text, nothing else`;
 
-    const refined = await generateWithAI(prompt, geminiKey, anthropicKey);
+    const rawRefined = await generateWithAI(prompt, geminiKey, anthropicKey);
+
+    // Re-insert real name and pronouns
+    const refined = rawRefined
+      .replace(/\[STUDENT\]/g, firstName)
+      .replace(/\bthey\b/g, pronounObj.subject)
+      .replace(/\bthem\b/g, pronounObj.object)
+      .replace(/\btheir\b/g, pronounObj.possessive)
+      .replace(/\bThey\b/g, pronounObj.subject.charAt(0).toUpperCase() + pronounObj.subject.slice(1))
+      .replace(/\bThem\b/g, pronounObj.object.charAt(0).toUpperCase() + pronounObj.object.slice(1))
+      .replace(/\bTheir\b/g, pronounObj.possessive.charAt(0).toUpperCase() + pronounObj.possessive.slice(1));
 
     // Update comment in DB
     await dbRun('UPDATE comments SET content = ?, "updatedAt" = NOW() WHERE id = ?', [refined, req.params.commentId]);
