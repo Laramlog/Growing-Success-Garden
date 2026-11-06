@@ -638,8 +638,19 @@ app.post('/api/classes/:classId/generate-comment', verifyToken, async (req, res)
     const classInfo = parseClass(await dbGet('SELECT * FROM classes WHERE id = ?', [classId]));
 
     const pronounObj = parsePronoun(student.pronouns);
-    const prevContext = previousTermComments && previousTermComments.length > 0
-      ? `\nPrevious term comments for context and consistency:\n${previousTermComments.map(c => `- ${c.subject || 'Learning Skills'}: "${c.content}"`).join('\n')}`
+
+    // Anonymize previous term comments — strip real name and pronouns before sending to AI
+    const anonPrevComments = (previousTermComments || []).map(c => {
+      let content = c.content || '';
+      if (student.firstName) content = content.replace(new RegExp(student.firstName, 'gi'), '[STUDENT]');
+      content = content
+        .replace(new RegExp(`\\b${pronounObj.subject}\\b`, 'gi'), 'they')
+        .replace(new RegExp(`\\b${pronounObj.object}\\b`, 'gi'), 'them')
+        .replace(new RegExp(`\\b${pronounObj.possessive}\\b`, 'gi'), 'their');
+      return { ...c, content };
+    });
+    const prevContext = anonPrevComments.length > 0
+      ? `\nPrevious term comments for context and consistency:\n${anonPrevComments.map(c => `- ${c.subject || 'Learning Skills'}: "${c.content}"`).join('\n')}`
       : '';
     const wordTarget = targetWordCount || 100;
     const gradeDisplay = classInfo.schoolType === 'elementary'
